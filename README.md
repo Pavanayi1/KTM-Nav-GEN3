@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="docs/logo.svg" width="128" height="128" alt="OpenDash logo">
+  <img src="branding/opendash_logo.svg" width="128" height="128" alt="OpenDash logo">
 </p>
 
 <h1 align="center">Navigator Gen3</h1>
