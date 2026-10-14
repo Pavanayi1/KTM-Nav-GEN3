@@ -2,7 +2,7 @@
   <img src="docs/logo.svg" width="128" height="128" alt="OpenDash logo">
 </p>
 
-<h1 align="center">OpenDash</h1>
+<h1 align="center">Navigator Gen3</h1>
 
 <p align="center">
   Google Maps turn-by-turn, phone notifications and ride analytics on the Gen-3 KTM and Husqvarna dash.<br>
