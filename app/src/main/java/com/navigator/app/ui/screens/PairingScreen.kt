@@ -39,6 +39,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -63,6 +64,8 @@ import com.navigator.app.ble.BccuConnectionService
 import com.navigator.app.settings.AppSettings
 import com.navigator.app.ui.OpenDashPermissions
 import com.navigator.app.ui.components.KtmPrimaryButton
+import com.navigator.app.ui.components.ConnectionOptionsDialog
+import com.navigator.app.ui.components.ConnectionProblemNotice
 import com.navigator.app.ui.theme.Barlow
 import com.navigator.app.ui.theme.BarlowCondensed
 import com.navigator.app.ui.theme.JetBrainsMono
@@ -84,8 +87,18 @@ fun PairingScreen(settings: AppSettings, onPaired: () -> Unit, onOpenLogs: () ->
     val foundDevices = remember { mutableStateListOf<FoundDevice>() }
     var scanning by remember { mutableStateOf(false) }
     var connectingAddress by remember { mutableStateOf<String?>(null) }
+    var optionsDevice by remember { mutableStateOf<BluetoothDevice?>(null) }
 
     val connectionState by BccuConnectionService.connectionState.collectAsState()
+
+    optionsDevice?.let { device ->
+        ConnectionOptionsDialog(settings, device.address, onDismiss = { optionsDevice = null }) {
+            settings.bondedDeviceAddress = device.address
+            settings.bondedDeviceName = device.name
+            connectingAddress = device.address
+            BccuConnectionService.start(context, device.address, restartConnection = true)
+        }
+    }
 
     // Only leave this screen once the handshake genuinely completes.
     androidx.compose.runtime.LaunchedEffect(connectionState, connectingAddress) {
@@ -239,7 +252,7 @@ fun PairingScreen(settings: AppSettings, onPaired: () -> Unit, onOpenLogs: () ->
                         dimmed = found.device.name == null && connectingAddress != found.device.address,
                         isKtm = isKtm,
                         onClick = {
-                            if (connectingAddress == null) {
+                            if (connectingAddress == null || connectionState == BccuConnectionService.ConnectionState.DISCONNECTED) {
                                 settings.bondedDeviceAddress = found.device.address
                                 settings.bondedDeviceName = found.device.name
                                 connectingAddress = found.device.address
@@ -247,6 +260,10 @@ fun PairingScreen(settings: AppSettings, onPaired: () -> Unit, onOpenLogs: () ->
                             }
                         },
                     )
+                    TextButton(onClick = { optionsDevice = found.device }) { Text("Connection options") }
+                    if (connectingAddress == found.device.address || settings.bondedDeviceAddress == found.device.address) {
+                        ConnectionProblemNotice(settings, found.device.address)
+                    }
                 }
                 if (foundDevices.isEmpty() && scanning) {
                     item {

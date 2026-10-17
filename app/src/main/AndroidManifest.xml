@@ -43,7 +43,7 @@
     <application
         android:name=".OpenDashApplication"
         android:allowBackup="false"
-        android:label="Navigator Gen3"
+        android:label="${appLabel}"
         android:theme="@style/Theme.OpenDash"
         android:icon="@mipmap/ic_launcher">
 
@@ -117,7 +117,7 @@
 
         <provider
             android:name="androidx.core.content.FileProvider"
-            android:authorities="com.navigator.app.fileprovider"
+            android:authorities="${applicationId}.fileprovider"
             android:exported="false"
             android:grantUriPermissions="true">
             <meta-data

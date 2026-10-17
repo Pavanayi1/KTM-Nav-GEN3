@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
+    <!-- Only selected by the optional debug field-test build. -->
+    <application>
+        <activity
+            android:name=".ui.MainActivity"
+            android:label="${appLabel}"
+            tools:replace="android:label" />
+    </application>
+</manifest>

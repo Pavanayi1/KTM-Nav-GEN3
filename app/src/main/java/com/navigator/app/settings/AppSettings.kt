@@ -2,8 +2,13 @@ package com.navigator.app.settings
 
 import android.content.Context
 import android.content.SharedPreferences
+import android.annotation.SuppressLint
 import androidx.security.crypto.EncryptedSharedPreferences
 import androidx.security.crypto.MasterKey
+import com.navigator.app.ble.BccuConnectionIssue
+import com.navigator.app.ble.BccuConnectionProfile
+import com.navigator.app.ble.BccuSessionKeyCodec
+import java.util.Locale
 
 /**
  * Single place for all persisted app configuration: bonded bike address,
@@ -12,6 +17,38 @@ import androidx.security.crypto.MasterKey
  * key is a secret worth protecting at rest.
  */
 class AppSettings(context: Context) {
+
+    /** Protocol choices and a paused retry reason belong to one bike, never the theme/brand. */
+    fun connectionProfile(address: String): BccuConnectionProfile =
+        BccuConnectionProfile.fromId(
+            pairingPrefs.getString("connection_profile_" + address.uppercase(Locale.ROOT), null)
+        )
+
+    // The service may start immediately after this UI action; persist the profile first.
+    @SuppressLint("ApplySharedPref")
+    fun setConnectionProfile(address: String, profile: BccuConnectionProfile) {
+        pairingPrefs.edit()
+            .putString("connection_profile_" + address.uppercase(Locale.ROOT), profile.id)
+            .remove("connection_issue_" + address.uppercase(Locale.ROOT))
+            .commit()
+    }
+
+    fun connectionIssue(address: String): BccuConnectionIssue? =
+        BccuConnectionIssue.fromId(
+            pairingPrefs.getString("connection_issue_" + address.uppercase(Locale.ROOT), null)
+        )
+
+    // A terminal auth failure must remain paused even if the process is stopped next.
+    @SuppressLint("ApplySharedPref")
+    fun setConnectionIssue(address: String, issue: BccuConnectionIssue?) {
+        pairingPrefs.edit().putString("connection_issue_" + address.uppercase(Locale.ROOT), issue?.name).commit()
+    }
+
+    /** Strict loading is opt-in so the standard profile keeps its existing key handling. */
+    fun loadValidatedSessionKeys(address: String): List<ByteArray>? =
+        BccuSessionKeyCodec.decode(
+            pairingPrefs.getString(KEY_SESSION_KEYS_PREFIX + address.uppercase(), null)
+        )
 
     private val prefs: SharedPreferences = run {
         val masterKey = MasterKey.Builder(context)

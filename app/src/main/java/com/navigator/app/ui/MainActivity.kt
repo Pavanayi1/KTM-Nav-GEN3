@@ -101,7 +101,7 @@ class MainActivity : ComponentActivity() {
         // service up as soon as the app is opened (it's a foreground service and
         // owns its own reconnect loop from there on). The AutoConnectReceiver
         // covers the "app never opened" cases (boot, bike back in range).
-        settings.bondedDeviceAddress?.let { BccuConnectionService.start(this, it) }
+        settings.bondedDeviceAddress?.let { BccuConnectionService.start(this, it, userInitiated = false) }
 
         var callRingingState = mutableStateOf(false)
         actions = object : ControllerStateMachine.Actions {

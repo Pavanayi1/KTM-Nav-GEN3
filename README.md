@@ -151,6 +151,10 @@ remote can reach, and Settings split into eight labelled groups.
 
 ## Compatibility and setup
 
+- **Experimental Svartpilen 401 (2025) connection profile:** open **Connection options** under a
+  discovered device, or in Settings for the saved bike. This is an explicit per-device opt-in;
+  the default KTM handshake is unchanged. See [the evidence and field-test guide](docs/husqvarna-401-experimental.md).
+
 - Tested on a **KTM 390 Adventure (2025)**. It targets the Gen-3 "connected" dash that KTM's and
   Husqvarna's own apps use for turn-by-turn, so it should work on other 2020+ Gen-3 bikes — but 1290 /
   890 / SMC and the Husqvarna models are still lightly tested. Reports and logs are very welcome.
@@ -170,8 +174,9 @@ remote can reach, and Settings split into eight labelled groups.
    ride after that is silent.)
 2. Turn-icon accuracy depends on your Google Maps version and your specific dash. If an icon looks wrong,
    correct it with the Symbol Test and Turn-icon Calibration screens.
-3. Husqvarna support has never been verified on a physical Husqvarna. It runs on the same dash protocol
-   and should work, but all testing so far has been on a KTM.
+3. The opt-in Svartpilen 401 (2025) profile has been field-tested with Xiaomi 15 / HyperOS 3:
+   fresh authorization, two later connections reusing stored keys, and visible navigation. KTM
+   regression testing of this change and other Husqvarna models remain unverified; see the field-test guide.
 4. Engine detection uses the phone's motion sensor, needs a short calibration, and varies by phone and
    mount. Without it, traffic detection falls back to a time-based guess.
 5. Rough-road detection needs a ride recorded on v0.3.0 or later — older GPX files fall back to GPS-only

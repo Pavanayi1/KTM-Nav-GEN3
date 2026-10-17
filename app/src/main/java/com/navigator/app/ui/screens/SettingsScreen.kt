@@ -148,6 +148,15 @@ fun SettingsScreen(
     val connectionState by BccuConnectionService.connectionState.collectAsState()
     val connected = connectionState == BccuConnectionService.ConnectionState.AUTHENTICATED
     val vehicleName = settings.bondedDeviceName ?: "Not paired"
+    var showConnectionOptions by remember { mutableStateOf(false) }
+    if (showConnectionOptions) {
+        settings.bondedDeviceAddress?.let { address ->
+            com.navigator.app.ui.components.ConnectionOptionsDialog(settings, address,
+                onDismiss = { showConnectionOptions = false }) {
+                BccuConnectionService.start(context, address, restartConnection = true)
+            }
+        }
+    }
 
     fun appLabel(pkg: String): String = try {
         pm.getApplicationLabel(pm.getApplicationInfo(pkg, 0)).toString()
@@ -194,6 +203,12 @@ fun SettingsScreen(
                     }
                     SettingsRow("Re-pair vehicle", showDivider = true, onClick = onRepair) {
                         OutlinedPill("RE-PAIR")
+                    }
+                    settings.bondedDeviceAddress?.let { address ->
+                        SettingsRow("Connection options", showDivider = true, onClick = { showConnectionOptions = true }) {
+                            OutlinedPill("SETUP / RETRY")
+                        }
+                        com.navigator.app.ui.components.ConnectionProblemNotice(settings, address)
                     }
                     SettingsRow("Change bike / brand", showDivider = true, onClick = onChangeBrand) {
                         MonoValue("${com.navigator.app.ui.theme.themeFor(settings.brand).displayName} ›")
@@ -667,7 +682,7 @@ private fun exportRoutes(context: android.content.Context) {
         return
     }
     val uris = ArrayList(files.map {
-        androidx.core.content.FileProvider.getUriForFile(context, "com.navigator.app.fileprovider", it)
+        androidx.core.content.FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", it)
     })
     val intent = Intent(Intent.ACTION_SEND_MULTIPLE).apply {
         type = "application/gpx+xml"

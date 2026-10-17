@@ -46,6 +46,8 @@ class BccuConnectionService : LifecycleService() {
 
     data class NotificationSent(val text: String, val icon: BccuProtocol.NotificationIcon)
 
+    data class ConnectionProblem(val address: String, val issue: BccuConnectionIssue)
+
     companion object {
         private const val CHANNEL_ID = "bccu_connection"
         private const val NOTIFICATION_ID = 1
@@ -103,9 +105,14 @@ class BccuConnectionService : LifecycleService() {
          */
         private const val STUCK_BACKGROUND_MS = 600_000L
         const val EXTRA_DEVICE_ADDRESS = "device_address"
+        private const val EXTRA_USER_INITIATED = "user_initiated"
+        private const val EXTRA_RESTART_CONNECTION = "restart_connection"
 
         private val _connectionState = MutableStateFlow(ConnectionState.DISCONNECTED)
         val connectionState: StateFlow<ConnectionState> = _connectionState
+
+        private val _connectionProblem = MutableStateFlow<ConnectionProblem?>(null)
+        val connectionProblem: StateFlow<ConnectionProblem?> = _connectionProblem
 
         private val _buttonEvents = MutableSharedFlow<BccuProtocol.HandlebarButton>(extraBufferCapacity = 8)
         val buttonEvents: SharedFlow<BccuProtocol.HandlebarButton> = _buttonEvents
@@ -125,9 +132,11 @@ class BccuConnectionService : LifecycleService() {
         private val _telemetry = MutableStateFlow<Map<String, String>>(emptyMap())
         val telemetry: StateFlow<Map<String, String>> = _telemetry
 
-        fun start(context: Context, deviceAddress: String) {
+        fun start(context: Context, deviceAddress: String, userInitiated: Boolean = true, restartConnection: Boolean = false) {
             val intent = Intent(context, BccuConnectionService::class.java)
                 .putExtra(EXTRA_DEVICE_ADDRESS, deviceAddress)
+                .putExtra(EXTRA_USER_INITIATED, userInitiated)
+                .putExtra(EXTRA_RESTART_CONNECTION, restartConnection)
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                 context.startForegroundService(intent)
             } else {
@@ -195,6 +204,9 @@ class BccuConnectionService : LifecycleService() {
 
     private var gatt: BluetoothGatt? = null
     private var currentDeviceAddress: String? = null
+    private var connectionProfile = BccuConnectionProfile.STANDARD
+    private var retryPolicy = BccuHandshakeRetryPolicy(connectionProfile)
+    private var helloReplied = false
     private var tempIv: ByteArray? = null
     private var tempSecret: ByteArray? = null
     private var sessionKeys: List<ByteArray>? = null
@@ -433,6 +445,7 @@ class BccuConnectionService : LifecycleService() {
      */
     @SuppressLint("MissingPermission")
     private fun startBleScan(address: String) {
+        if (!retriesAllowed(address)) return
         if (scanning) return
         val adapter = (getSystemService(Context.BLUETOOTH_SERVICE) as BluetoothManager).adapter
         val scanner = adapter?.bluetoothLeScanner
@@ -502,6 +515,12 @@ class BccuConnectionService : LifecycleService() {
         }
         val address = intent?.getStringExtra(EXTRA_DEVICE_ADDRESS) ?: AppSettings(this).bondedDeviceAddress
         if (address != null) {
+            if (intent?.getBooleanExtra(EXTRA_USER_INITIATED, false) == true) {
+                AppSettings(this).setConnectionIssue(address, null)
+                _connectionProblem.value = null
+                retryPolicy.reset()
+                if (intent.getBooleanExtra(EXTRA_RESTART_CONNECTION, false)) closeGattForRetry()
+            }
             connect(address)
         }
         return START_STICKY
@@ -515,6 +534,7 @@ class BccuConnectionService : LifecycleService() {
      */
     private fun connect(address: String, autoConnect: Boolean = false) {
         if (gatt != null) return
+        if (!retriesAllowed(address)) return
         // Already scanning for this same bike (e.g. the in-service adapter-ON
         // handler races AutoConnectReceiver's onStartCommand): let the scan win.
         // A blind direct connect while the bike is off just churns status-255
@@ -525,7 +545,15 @@ class BccuConnectionService : LifecycleService() {
         }
         if (scanning) stopBleScan()
         AppLogger.log("BLE", "Connecting to $address (autoConnect=$autoConnect)")
+        val profile = AppSettings(this).connectionProfile(address)
+        if (profile != connectionProfile || !address.equals(currentDeviceAddress, ignoreCase = true)) {
+            connectionProfile = profile
+            retryPolicy = BccuHandshakeRetryPolicy(profile)
+        }
         currentDeviceAddress = address
+        helloReplied = false
+        _connectionProblem.value = null
+        AppLogger.log("Auth", "Connection profile=${profile.id}; Android bond and app authorization are separate")
         _connectionState.value = ConnectionState.CONNECTING
         connectingSinceMs = System.currentTimeMillis()
         pendingAutoConnect = autoConnect
@@ -540,6 +568,40 @@ class BccuConnectionService : LifecycleService() {
         val device = adapter.getRemoteDevice(address)
         _deviceName.value = AppSettings(this).bondedDeviceName ?: device.name
         gatt = device.connectGatt(this, autoConnect, callback, BluetoothDevice.TRANSPORT_LE)
+    }
+
+    private fun retriesAllowed(address: String): Boolean {
+        val settings = AppSettings(this)
+        if (settings.connectionProfile(address) == BccuConnectionProfile.STANDARD) return true
+        val issue = settings.connectionIssue(address) ?: return true
+        _connectionProblem.value = ConnectionProblem(address, issue)
+        updateForegroundNotification("Connection paused — open Navigator")
+        return false
+    }
+
+    /** Keep Android's bond and any keys intact; only an explicit Retry clears this pause. */
+    private fun pauseConnection(issue: BccuConnectionIssue) {
+        val address = currentDeviceAddress ?: return
+        AppSettings(this).setConnectionIssue(address, issue)
+        _connectionProblem.value = ConnectionProblem(address, issue)
+        AppLogger.log("Auth", "Connection paused: ${issue.name}; profile=${connectionProfile.id}; pairing kept")
+        closeGattForRetry()
+        updateForegroundNotification("Connection paused — open Navigator")
+    }
+
+    private fun closeGattForRetry() {
+        stopBleScan()
+        settleJob?.cancel(); settleJob = null
+        handshakeTimeoutJob?.cancel(); handshakeTimeoutJob = null
+        rssiJob?.cancel(); rssiJob = null
+        val old = gatt
+        gatt = null // Late callbacks must not resume the queue or restart this connection.
+        clearGattQueue()
+        tempIv = null; tempSecret = null; sessionKeys = null; activeSessionKey = null
+        helloReplied = false
+        _connectionState.value = ConnectionState.DISCONNECTED
+        _signalRssi.value = null
+        runCatching { old?.disconnect(); old?.close() }
     }
 
     override fun onDestroy() {
@@ -667,6 +729,11 @@ class BccuConnectionService : LifecycleService() {
                     startHandshakeTimeout()
                     g.discoverServices()
                 } else if (newState == BluetoothGatt.STATE_DISCONNECTED) {
+                    if (retryPolicy.onDisconnected(status, helloReplied,
+                            _connectionState.value == ConnectionState.AUTHENTICATED)) {
+                        pauseConnection(BccuConnectionIssue.HANDSHAKE_REJECTED)
+                        return
+                    }
                     // An AUTHENTICATED session ending (ignition off, out of
                     // range) closes this boot cycle - the next one deserves a
                     // fresh retry budget, not leftovers from the last stall.
@@ -701,6 +768,7 @@ class BccuConnectionService : LifecycleService() {
         }
 
         override fun onServicesDiscovered(g: BluetoothGatt, status: Int) {
+            if (gatt !== g) return
             try {
                 AppLogger.log("BLE", "onServicesDiscovered status=$status, ${g.services.size} services")
                 dumpGattTable(g)
@@ -718,6 +786,7 @@ class BccuConnectionService : LifecycleService() {
         }
 
         override fun onMtuChanged(g: BluetoothGatt, mtu: Int, status: Int) {
+            if (gatt !== g) return
             try {
                 AppLogger.log("BLE", "onMtuChanged mtu=$mtu status=$status")
                 if (g.getService(BccuProtocol.MAIN_SERVICE) == null) {
@@ -735,6 +804,7 @@ class BccuConnectionService : LifecycleService() {
         }
 
         override fun onDescriptorWrite(g: BluetoothGatt, d: BluetoothGattDescriptor, status: Int) {
+            if (gatt !== g) return
             try {
                 val statusName = if (status == BluetoothGatt.GATT_SUCCESS) "SUCCESS" else "FAILED($status)"
                 AppLogger.log("BLE", "onDescriptorWrite ${d.characteristic?.uuid} -> $statusName")
@@ -745,6 +815,7 @@ class BccuConnectionService : LifecycleService() {
         }
 
         override fun onCharacteristicWrite(g: BluetoothGatt, c: BluetoothGattCharacteristic, status: Int) {
+            if (gatt !== g) return
             try {
                 val statusName = if (status == BluetoothGatt.GATT_SUCCESS) "SUCCESS" else "FAILED($status)"
                 AppLogger.log("BLE", "onCharacteristicWrite ${c.uuid} -> $statusName")
@@ -756,6 +827,7 @@ class BccuConnectionService : LifecycleService() {
 
         @Suppress("DEPRECATION")
         override fun onCharacteristicChanged(g: BluetoothGatt, c: BluetoothGattCharacteristic) {
+            if (gatt !== g) return
             try {
                 handleIncoming(c.uuid, c.value ?: ByteArray(0))
             } catch (e: Exception) {
@@ -764,6 +836,7 @@ class BccuConnectionService : LifecycleService() {
         }
 
         override fun onCharacteristicChanged(g: BluetoothGatt, c: BluetoothGattCharacteristic, value: ByteArray) {
+            if (gatt !== g) return
             try {
                 handleIncoming(c.uuid, value)
             } catch (e: Exception) {
@@ -772,11 +845,13 @@ class BccuConnectionService : LifecycleService() {
         }
 
         override fun onReadRemoteRssi(g: BluetoothGatt, rssi: Int, status: Int) {
+            if (gatt !== g) return
             if (status == BluetoothGatt.GATT_SUCCESS) _signalRssi.value = rssi
         }
 
         @Suppress("DEPRECATION")
         override fun onCharacteristicRead(g: BluetoothGatt, c: BluetoothGattCharacteristic, status: Int) {
+            if (gatt !== g) return
             try {
                 val data = c.value ?: ByteArray(0)
                 logProbeValue(readLabel(c, status), data)
@@ -788,6 +863,7 @@ class BccuConnectionService : LifecycleService() {
         }
 
         override fun onCharacteristicRead(g: BluetoothGatt, c: BluetoothGattCharacteristic, value: ByteArray, status: Int) {
+            if (gatt !== g) return
             try {
                 logProbeValue(readLabel(c, status), value)
             } catch (e: Exception) {
@@ -898,19 +974,13 @@ class BccuConnectionService : LifecycleService() {
 
         when {
             cmd == BccuProtocol.CMD_HELLO -> {
-                // Always echo HELLO back. Field logs proved this dash decides
-                // whether to show its "confirm pairing" prompt entirely from its
-                // own bond memory - not from which command we reply. Echoing
-                // HELLO is the ONLY reply it acts on: to a bonded dash it answers
-                // with GENERATE_KEYS in a few seconds and no prompt; to a genuinely
-                // new device it prompts and answers once the rider confirms (~30s).
-                // The old "known bike -> reply GENERATE_KEYS to skip the prompt"
-                // shortcut was silently ignored by the dash, stalling every single
-                // reconnect and (via the recovery) forcing a spurious re-pair.
+                // Keep the existing KTM HELLO echo. The explicit Husqvarna profile
+                // follows the official-app capture; it does not imply keys exist.
                 val address = currentDeviceAddress
                 val known = address != null && AppSettings(this@BccuConnectionService).hasPairedBefore(address)
-                AppLogger.log("Auth", "cmd=HELLO (${if (known) "known" else "new"} bike $address) - echoing HELLO; dash decides whether to prompt")
-                replyControl(BccuProtocol.CMD_HELLO)
+                helloReplied = true
+                AppLogger.log("Auth", "cmd=HELLO (${if (known) "known" else "new"} bike $address); profile=${connectionProfile.id}; reply=${connectionProfile.helloReply}")
+                replyControl(connectionProfile.helloReply)
             }
             cmd == BccuProtocol.CMD_GENERATE_KEYS -> {
                 AppLogger.log("Auth", "cmd=GENERATE_KEYS, deriving session keys")
@@ -934,12 +1004,18 @@ class BccuConnectionService : LifecycleService() {
                     // key from the pool it has kept since pairing. Restore the
                     // pool we persisted then instead of stalling forever.
                     keys = currentDeviceAddress?.let {
-                        AppSettings(this@BccuConnectionService).loadSessionKeys(it)
+                        val settings = AppSettings(this@BccuConnectionService)
+                        if (connectionProfile == BccuConnectionProfile.STANDARD) settings.loadSessionKeys(it)
+                        else settings.loadValidatedSessionKeys(it)
                     }
                     if (keys != null) {
                         AppLogger.log("Auth", "Restored persisted session key pool (${keys.size} keys)")
                         sessionKeys = keys
                     }
+                }
+                if (connectionProfile.needsSessionKeys(keys)) {
+                    pauseConnection(BccuConnectionIssue.MISSING_KEYS)
+                    return
                 }
                 if (keys == null || keyIndex >= keys.size) {
                     AppLogger.log("Auth", "!! Bike selected key index $keyIndex but no key pool yet")
@@ -951,6 +1027,7 @@ class BccuConnectionService : LifecycleService() {
                     AppLogger.log("Auth", ">>> AUTHENTICATED <<< (key index $keyIndex)")
                     handshakeTimeoutJob?.cancel(); handshakeTimeoutJob = null
                     handshakeRecoveries = 0
+                    retryPolicy.reset()
                     stopBleScan()
                     _connectionState.value = ConnectionState.AUTHENTICATED
                     currentDeviceAddress?.let {
@@ -999,6 +1076,10 @@ class BccuConnectionService : LifecycleService() {
             val budget = if (known) HANDSHAKE_TIMEOUT_KNOWN_MS else HANDSHAKE_TIMEOUT_FIRST_PAIR_MS
             delay(budget)
             if (_connectionState.value == ConnectionState.AUTHENTICATED) return@launch
+            if (connectionProfile != BccuConnectionProfile.STANDARD) {
+                pauseConnection(BccuConnectionIssue.HANDSHAKE_TIMEOUT)
+                return@launch
+            }
             handshakeRecoveries++
             // Back off instead of looping: one quickish retry, then long
             // cooldowns. Rapid drop/reconnect cycles against a booting dash
@@ -1616,10 +1697,17 @@ class BccuConnectionService : LifecycleService() {
                 gattOpFinished()
                 return@enqueueGattOp
             }
-            characteristic.writeType = BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT
+            val withoutResponse = connectionProfile.useWriteWithoutResponse(
+                isAuthReply = uuid == BccuProtocol.AUTH_REPLY,
+                supported = characteristic.properties and BluetoothGattCharacteristic.PROPERTY_WRITE_NO_RESPONSE != 0
+            )
+            characteristic.writeType = if (withoutResponse) BluetoothGattCharacteristic.WRITE_TYPE_NO_RESPONSE
+                else BluetoothGattCharacteristic.WRITE_TYPE_DEFAULT
             characteristic.value = data
             val accepted = g.writeCharacteristic(characteristic)
-            AppLogger.log("BLE", "writeCharacteristic $uuid (${data.size} bytes) queued=$accepted")
+            AppLogger.log("BLE", "writeCharacteristic $uuid (${data.size} bytes) type=${characteristic.writeType} queued=$accepted")
+            // Android delivers onCharacteristicWrite for both write types. Advance
+            // only there (or on a rejected enqueue), never twice for no-response.
             if (!accepted) {
                 gattOpFinished()
             }

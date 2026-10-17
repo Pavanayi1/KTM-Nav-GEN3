@@ -387,7 +387,7 @@ private fun RideDetail(file: File) {
         com.navigator.app.ui.components.KtmOutlineButton("Share GPX") {
             runCatching {
                 val uri = androidx.core.content.FileProvider.getUriForFile(
-                    context, "com.navigator.app.fileprovider", file
+                    context, "${context.packageName}.fileprovider", file
                 )
                 val intent = android.content.Intent(android.content.Intent.ACTION_SEND)
                     .setType("application/gpx+xml")

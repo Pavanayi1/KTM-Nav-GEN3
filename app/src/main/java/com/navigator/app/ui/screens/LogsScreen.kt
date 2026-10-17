@@ -64,7 +64,7 @@ fun LogsScreen(onBack: () -> Unit) {
                     .border(1.dp, Ktm.Orange, RoundedCornerShape(7.dp))
                     .clickable {
                         val file = AppLogger.currentLogFile() ?: return@clickable
-                        val uri = FileProvider.getUriForFile(context, "com.navigator.app.fileprovider", file)
+                        val uri = FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", file)
                         val intent = Intent(Intent.ACTION_SEND).apply {
                             type = "text/plain"
                             putExtra(Intent.EXTRA_STREAM, uri)

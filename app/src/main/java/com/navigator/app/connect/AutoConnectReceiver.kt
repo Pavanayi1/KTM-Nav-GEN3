@@ -32,7 +32,7 @@ class AutoConnectReceiver : BroadcastReceiver() {
                 AppLogger.log("AutoConnect", "ACL_CONNECTED from ${device.address}, saved=$savedAddress")
                 if (device.address.equals(savedAddress, ignoreCase = true)) {
                     AppLogger.log("AutoConnect", "Match - starting BccuConnectionService")
-                    BccuConnectionService.start(context, savedAddress)
+                    BccuConnectionService.start(context, savedAddress, userInitiated = false)
                 }
             }
             BluetoothAdapter.ACTION_STATE_CHANGED -> {
@@ -40,13 +40,13 @@ class AutoConnectReceiver : BroadcastReceiver() {
                 if (state == BluetoothAdapter.STATE_ON) {
                     val savedAddress = AppSettings(context).bondedDeviceAddress ?: return
                     AppLogger.log("AutoConnect", "Bluetooth turned on - starting service for $savedAddress")
-                    BccuConnectionService.start(context, savedAddress)
+                    BccuConnectionService.start(context, savedAddress, userInitiated = false)
                 }
             }
             Intent.ACTION_BOOT_COMPLETED -> {
                 val savedAddress = AppSettings(context).bondedDeviceAddress ?: return
                 AppLogger.log("AutoConnect", "Boot completed, starting service for $savedAddress")
-                BccuConnectionService.start(context, savedAddress)
+                BccuConnectionService.start(context, savedAddress, userInitiated = false)
             }
         }
     }
