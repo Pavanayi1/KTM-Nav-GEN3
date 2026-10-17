@@ -579,9 +579,13 @@ class BccuConnectionService : LifecycleService() {
     }
 
     private fun buildForegroundNotification(status: String): Notification {
-        val pendingIntent = packageManager.getLaunchIntentForPackage(packageName)?.let {
-            PendingIntent.getActivity(this, 0, it, PendingIntent.FLAG_IMMUTABLE)
-        }
+        // Target the stable activity: a launcher alias can be disabled after a brand change.
+        val pendingIntent = PendingIntent.getActivity(
+            this, 0,
+            Intent(this, com.navigator.app.ui.MainActivity::class.java)
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_RESET_TASK_IF_NEEDED),
+            PendingIntent.FLAG_IMMUTABLE
+        )
         // A real way out from the notification: stops this service (removing
         // the ongoing notification) and closes the app task - the R20 field
         // request was an exit that actually exits, not just opens the app.

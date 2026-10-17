@@ -2,4 +2,5 @@
 <resources>
     <!-- KTM orange, matching the in-app theme's Ktm.Orange. -->
     <color name="ic_launcher_background">#FF6600</color>
+    <color name="ic_launcher_husqvarna_background">#2C5CB0</color>
 </resources>

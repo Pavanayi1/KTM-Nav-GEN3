@@ -28,6 +28,7 @@ import androidx.core.view.WindowCompat
 import androidx.lifecycle.lifecycleScope
 import com.navigator.app.audio.CallAudioRouter
 import com.navigator.app.audio.MediaControlBridge
+import com.navigator.app.branding.LauncherBranding
 import com.navigator.app.ble.BccuConnectionService
 import com.navigator.app.ble.BccuProtocol
 import com.navigator.app.controller.ControllerScreen
@@ -90,6 +91,7 @@ class MainActivity : ComponentActivity() {
         // Apply the saved brand theme before the first frame so the app opens in
         // the right skin (KTM dark / Husqvarna light) with no flash of the wrong one.
         com.navigator.app.ui.theme.Ktm.applyBrand(settings.brand)
+        LauncherBranding.apply(this, settings.brand.takeIf { settings.brandChosen })
         mediaControl = MediaControlBridge(this)
         callAudioRouter = CallAudioRouter(this)
 
@@ -398,6 +400,11 @@ private fun OpenDashApp(
                 onPair = { brand ->
                     settings.brand = brand
                     com.navigator.app.ui.theme.Ktm.applyBrand(brand)
+                    if (!LauncherBranding.apply(context, brand)) {
+                        android.widget.Toast.makeText(context,
+                            "Theme saved. Could not update the home-screen icon; reopen the app to retry.",
+                            android.widget.Toast.LENGTH_LONG).show()
+                    }
                     // From Settings → just return; on first run → continue setup.
                     route = brandReturnRoute ?: if (!settings.onboardingComplete) AppRoute.ONBOARDING
                         else if (settings.bondedDeviceAddress == null) AppRoute.PAIRING

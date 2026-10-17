@@ -43,7 +43,7 @@
     <application
         android:name=".OpenDashApplication"
         android:allowBackup="false"
-        android:label="Navigator Gen3"
+        android:label="${appLabel}"
         android:theme="@style/Theme.OpenDash"
         android:icon="@mipmap/ic_launcher">
 
@@ -51,11 +51,7 @@
             android:name=".ui.MainActivity"
             android:exported="true"
             android:launchMode="singleTask"
-            android:label="Navigator Gen3">
-            <intent-filter>
-                <action android:name="android.intent.action.MAIN" />
-                <category android:name="android.intent.category.LAUNCHER" />
-            </intent-filter>
+            android:label="${appLabel}">
             <!-- Open GPX tracks from file managers / chat apps: imported into
                  the routes folder and shown in the ride viewer. -->
             <intent-filter>
@@ -76,6 +72,45 @@
                 <data android:scheme="file" android:mimeType="application/octet-stream" />
             </intent-filter>
         </activity>
+
+        <!-- Keep these names stable across updates. Only launcher aliases are
+             switched; MainActivity remains available for GPX and notifications. -->
+        <activity-alias
+            android:name="${applicationId}.launcher.DefaultLauncher"
+            android:targetActivity=".ui.MainActivity"
+            android:enabled="true"
+            android:exported="true"
+            android:icon="@mipmap/ic_launcher"
+            android:label="${appLabel}">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity-alias>
+        <activity-alias
+            android:name="${applicationId}.launcher.KtmLauncher"
+            android:targetActivity=".ui.MainActivity"
+            android:enabled="false"
+            android:exported="true"
+            android:icon="@mipmap/ic_launcher"
+            android:label="${ktmLauncherLabel}">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity-alias>
+        <activity-alias
+            android:name="${applicationId}.launcher.HusqvarnaLauncher"
+            android:targetActivity=".ui.MainActivity"
+            android:enabled="false"
+            android:exported="true"
+            android:icon="@mipmap/ic_launcher_husqvarna"
+            android:label="${husqvarnaLauncherLabel}">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity-alias>
 
         <service
             android:name=".ble.BccuConnectionService"

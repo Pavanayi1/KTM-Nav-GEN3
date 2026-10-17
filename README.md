@@ -250,3 +250,8 @@ affiliated with KTM or Husqvarna. Ride responsibly — do not interact with your
 ## License
 
 [MIT](LICENSE)
+
+## Launcher identity
+
+Choosing KTM or Husqvarna also changes the launcher's app name and icon color.
+See [launcher branding](docs/launcher-branding.md) for behavior and phone checks.

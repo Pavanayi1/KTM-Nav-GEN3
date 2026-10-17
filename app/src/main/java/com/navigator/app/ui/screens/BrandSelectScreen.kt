@@ -157,7 +157,14 @@ fun BrandSelectScreen(
             }
         }
 
-        // Pair button.
+        Text(
+            "Also changes the app name and icon on your home screen.",
+            color = Ktm.Muted, fontFamily = Barlow, fontSize = 12.sp,
+            textAlign = TextAlign.Center,
+            modifier = Modifier.fillMaxWidth().padding(bottom = 12.dp),
+        )
+
+        // Confirm the brand; returning users do not need to pair again.
         Box(
             modifier = Modifier
                 .fillMaxWidth()
@@ -169,7 +176,7 @@ fun BrandSelectScreen(
         ) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text(
-                    "PAIR YOUR ${theme.displayName.uppercase()}",
+                    if (onBack != null) "USE ${theme.displayName.uppercase()}" else "PAIR YOUR ${theme.displayName.uppercase()}",
                     color = Ktm.OnAccent, fontFamily = BarlowCondensed, fontWeight = FontWeight.ExtraBold,
                     fontSize = 19.sp, letterSpacing = 1.2.sp,
                 )

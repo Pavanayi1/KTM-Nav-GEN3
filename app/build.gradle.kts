@@ -21,6 +21,8 @@ android {
 
     defaultConfig {
         applicationId = "com.navigator.app"
+        manifestPlaceholders["ktmLauncherLabel"] = "KTM Navigator"
+        manifestPlaceholders["husqvarnaLauncherLabel"] = "Husqvarna Navigator"
         minSdk = 26
         targetSdk = 34
         // Days-since-epoch: monotonically increasing across builds, so every
@@ -30,6 +32,7 @@ android {
         // Public beta line, with a build stamp appended so it's easy to confirm
         // which build is actually installed on-device (Settings > Diagnostics).
         versionName = "0.2.0-beta+" + SimpleDateFormat("MMdd-HHmm").format(Date())
+        manifestPlaceholders["appLabel"] = "Navigator Gen3"
     }
 
     signingConfigs {
@@ -55,6 +58,14 @@ android {
         }
     }
 
+    // Preserve distinct launcher labels when combined with the optional field-test build.
+    buildTypes.configureEach {
+        if (name == "debug" && providers.gradleProperty("husqvarnaTestBuild").orNull == "true") {
+            manifestPlaceholders["ktmLauncherLabel"] = "KTM Navigator Test"
+            manifestPlaceholders["husqvarnaLauncherLabel"] = "Husqvarna Navigator Test"
+        }
+    }
+
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
@@ -77,6 +88,7 @@ android {
 }
 
 dependencies {
+    testImplementation("junit:junit:4.13.2")
     // On-device maneuver-icon classifier (ported from the KTM Gen-3 companion
     // app's approach): a small TFLite CNN recognises the nav app's turn-icon
     // bitmap and outputs the dash turn-icon code.
