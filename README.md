@@ -57,9 +57,10 @@ on the *media* channel, so music keeps playing in stereo in both helmets and duc
 **What you need**
 
 - **Rider:** Navigator R76 or later (Android 10+).
-- **Pillion:** the small **Rider Intercom** companion app from the same release
-  (`RiderIntercom-companion.apk`, Android 10+). Your pillion doesn't need the bike app. Any rider can
-  also use Navigator itself as the other end, since both speak the same protocol.
+- **Pillion:** the standalone **[Rider Intercom](https://github.com/Pavanayi1/intercom)** companion app
+  ([download APK](https://github.com/Pavanayi1/intercom/raw/main/rider-intercom.apk), Android 10+).
+  Your pillion doesn't need the bike app. Any rider can also use Navigator itself as the other end,
+  since both speak the same protocol.
 - A Bluetooth headset in each helmet is ideal. Phone speakers work for a test.
 
 **One-time setup**
@@ -256,8 +257,9 @@ remote can reach, and Settings split into eight labelled groups.
 Grab the APK from the [latest release](../../releases/latest) (only from there: see the warning at the
 top), copy it to your phone and open it (you'll
 need to allow "install from unknown sources"). First-ever pairing needs the physical "add device"
-confirmation on the bike's dash. Your pillion installs `RiderIntercom-companion.apk` from the same release
-(see [Rider Intercom](#rider-intercom--talk-to-your-pillion-new-in-r76)).
+confirmation on the bike's dash. Your pillion installs the **[Rider Intercom](https://github.com/Pavanayi1/intercom)** companion app
+([download APK](https://github.com/Pavanayi1/intercom/raw/main/rider-intercom.apk);
+see [Rider Intercom](#rider-intercom--talk-to-your-pillion-new-in-r76)).
 
 If Android says **"App blocked to protect your device"**, that's Play Protect, which blocks sideloaded apps
 that read notifications. In the Play Store open your profile → **Play Protect** → gear icon, turn off
