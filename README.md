@@ -21,6 +21,18 @@
 
 <p align="center"><em>Unofficial beta. Not affiliated with KTM or Husqvarna.</em></p>
 
+> [!CAUTION]
+> **Only download Navigator from this repo's [Releases page](../../releases).** A fake copy of this project
+> (account `Satsumaassortativemating71` and its `github.io` site) offers a "download" that is **Windows
+> malware** in a `.zip` file. See [issue #9](../../issues/9).
+>
+> - The real app is **only ever an `.apk` file**, never a `.zip`, `.exe` or `.cmd`.
+> - It is only published at `github.com/Pavanayi1/KTM-Nav-GEN3`. There is no website or mirror.
+> - If you downloaded a `.zip` from anywhere else, **do not open it**. If you already ran something from
+>   it on a PC, disconnect it from the internet, run a full antivirus scan and change passwords you used
+>   on that PC.
+> - Each release lists the APK's SHA-256 checksum so you can check your file.
+
 ---
 
 
@@ -241,7 +253,8 @@ remote can reach, and Settings split into eight labelled groups.
 
 ## Install (no build needed)
 
-Grab the APK from the [latest release](../../releases/latest), copy it to your phone and open it (you'll
+Grab the APK from the [latest release](../../releases/latest) (only from there: see the warning at the
+top), copy it to your phone and open it (you'll
 need to allow "install from unknown sources"). First-ever pairing needs the physical "add device"
 confirmation on the bike's dash. Your pillion installs `RiderIntercom-companion.apk` from the same release
 (see [Rider Intercom](#rider-intercom--talk-to-your-pillion-new-in-r76)).
