@@ -36,16 +36,22 @@ import androidx.compose.material3.RadioButtonDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalContext
+import com.navigator.app.gemini.GeminiSummarizer
 import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
@@ -59,15 +65,17 @@ import com.navigator.app.ble.BccuProtocol
 import com.navigator.app.settings.AppSettings
 import com.navigator.app.ui.components.Eyebrow
 import com.navigator.app.ui.components.GroupCard
+import com.navigator.app.ui.components.RowNote
+import com.navigator.app.ui.components.Segmented
 import com.navigator.app.ui.components.KtmToggle
 import com.navigator.app.ui.components.MonoValue
 import com.navigator.app.ui.components.SettingsRow
 import com.navigator.app.ui.theme.Barlow
 import com.navigator.app.ui.theme.BarlowCondensed
 import com.navigator.app.ui.theme.Ktm
-import com.navigator.app.ui.theme.OpenDashIcons
+import com.navigator.app.ui.theme.NavIcons
 
-private enum class SettingsDialog { NONE, NAME, GEMINI, GEMINI_MODEL, NAV_APP, MIRROR_APPS, CALL_AUDIO, OVERSPEED_LIMIT }
+private enum class SettingsDialog { NONE, NAME, GEMINI, GEMINI_MODEL, GEMINI_MODEL_CUSTOM, NAV_APP, MIRROR_APPS, CALL_AUDIO, OVERSPEED_LIMIT, HOME_PLACE, WORK_PLACE }
 
 /**
  * Settings (screen 05) — the §5 restructure into four labelled groups
@@ -84,6 +92,7 @@ fun SettingsScreen(
     onBack: () -> Unit,
     onOpenLogs: () -> Unit,
     onOpenSymbolTest: () -> Unit,
+    onOpenDeveloper: () -> Unit = {},
     onOpenTurnCalibration: () -> Unit,
     onOpenVibrationCalibration: () -> Unit = {},
     onOpenRides: () -> Unit = {},
@@ -101,27 +110,116 @@ fun SettingsScreen(
     var preferredAudioAddress by remember { mutableStateOf(settings.preferredCallAudioDeviceAddress) }
     var mirrorEnabled by remember { mutableStateOf(settings.mirrorEnabled) }
     var marqueeEnabled by remember { mutableStateOf(settings.marqueeEnabled) }
+    var keepSessionAlive by remember { mutableStateOf(settings.keepSessionAlive) }
     var gamepadEnabled by remember { mutableStateOf(settings.gamepadEnabled) }
     var geminiModel by remember { mutableStateOf(settings.geminiModel) }
+    var customGeminiModels by remember { mutableStateOf(settings.customGeminiModels) }
+    var aiTestState by remember { mutableStateOf("") }
+    // Models fetched live from Google when the picker opens. Google retires
+    // model names between app releases (gemini-2.0-flash, the old default, is
+    // already gone), so the built-in list is only the offline fallback.
+    var fetchedModels by remember { mutableStateOf<List<String>>(emptyList()) }
+    val scope = rememberCoroutineScope()
     var turnBeepEnabled by remember { mutableStateOf(settings.turnBeepEnabled) }
     var beepVolume by remember { mutableStateOf(settings.beepVolumePercent) }
     var powerSave by remember { mutableStateOf(settings.powerSaveEnabled) }
+    var fileLogging by remember { mutableStateOf(settings.fileLoggingEnabled) }
+    var devMode by remember { mutableStateOf(settings.devModeEnabled) }
     var engineDetect by remember { mutableStateOf(settings.engineDetectEnabled) }
     var vibSensitivity by remember { mutableStateOf(settings.vibrationSensitivity) }
     var overspeedEnabled by remember { mutableStateOf(settings.overspeedEnabled) }
     var overspeedLimit by remember { mutableStateOf(settings.overspeedLimitKmh) }
     var routeRecordEnabled by remember { mutableStateOf(settings.routeAutoRecordEnabled) }
+    var idleDashEnabled by remember { mutableStateOf(settings.idleDashEnabled) }
+    var idleShowClock by remember { mutableStateOf(settings.idleShowClock) }
+    var idleShowMusic by remember { mutableStateOf(settings.idleShowMusic) }
+    var idleShowWeather by remember { mutableStateOf(settings.idleShowWeather) }
+    var idleRotateSec by remember { mutableStateOf(settings.idleRotateSec) }
+    var farTurnMusic by remember { mutableStateOf(settings.farTurnMusicEnabled) }
     var waypoint by remember { mutableStateOf(settings.waypoint) }
-    var accessibilityGranted by remember {
-        mutableStateOf(com.navigator.app.controller.RemoteControlAccessibilityService.isRunning)
-    }
+    var homeDestination by remember { mutableStateOf(settings.homeDestination) }
+    var homeAddress by remember { mutableStateOf(settings.homeAddress) }
+    var workDestination by remember { mutableStateOf(settings.workDestination) }
+    var workAddress by remember { mutableStateOf(settings.workAddress) }
+    // Ask Android, not just our own in-process flag: isRunning is false during
+    // any rebind, and can't see the OEM battery manager having unticked us.
+    fun accessibilityLive() =
+        com.navigator.app.controller.RemoteControlAccessibilityService.isRunning ||
+            com.navigator.app.controller.RemoteControlAccessibilityService.isEnabledInSettings(context)
+    var accessibilityGranted by remember { mutableStateOf(accessibilityLive()) }
     var dialog by remember { mutableStateOf(SettingsDialog.NONE) }
 
-    val installedApps = remember {
-        pm.getInstalledApplications(PackageManager.GET_META_DATA)
-            .filter { pm.getLaunchIntentForPackage(it.packageName) != null }
-            .sortedBy { pm.getApplicationLabel(it).toString() }
+    // Ride backup / restore. Both go through the system picker so the rider
+    // chooses where it lands (Drive, Files, a USB stick) and the app needs no
+    // storage permission of its own.
+    // One count, loaded off the main thread, shared by all three rows that show
+    // it. It used to be listed from disk three separate times per open - and
+    // once (the "View rides" row) with no remember at all, so that one re-listed
+    // the routes directory on every recomposition of the row.
+    var rideCount by remember { mutableStateOf(0) }
+    LaunchedEffect(Unit) {
+        rideCount = withContext(Dispatchers.IO) {
+            com.navigator.app.location.RouteRecorder.listRoutes(context).size
+        }
     }
+    val zipExportLauncher = androidx.activity.compose.rememberLauncherForActivityResult(
+        androidx.activity.result.contract.ActivityResultContracts.CreateDocument("application/zip")
+    ) { uri ->
+        if (uri == null) return@rememberLauncherForActivityResult
+        val written = com.navigator.app.location.RideArchive.exportTo(context, uri)
+        toast(
+            context,
+            when {
+                written < 0 -> "Backup failed — see logs"
+                written == 0 -> "No recorded rides yet"
+                written == 1 -> "Backed up 1 ride"
+                else -> "Backed up $written rides"
+            },
+        )
+    }
+    val zipImportLauncher = androidx.activity.compose.rememberLauncherForActivityResult(
+        androidx.activity.result.contract.ActivityResultContracts.OpenDocument()
+    ) { uri ->
+        if (uri == null) return@rememberLauncherForActivityResult
+        val result = com.navigator.app.location.RideArchive.importFrom(context, uri)
+        rideCount = com.navigator.app.location.RouteRecorder.listRoutes(context).size
+        toast(
+            context,
+            buildString {
+                append(if (result.imported == 1) "Restored 1 ride" else "Restored ${result.imported} rides")
+                if (result.skipped > 0) append(" · ${result.skipped} already here")
+                if (result.failed > 0) append(" · ${result.failed} failed")
+            },
+        )
+    }
+
+    // The launchable-app list for the "Mirror-from apps" picker, as
+    // (package, label) pairs. This used to run synchronously inside remember{}
+    // during the first composition, and it was why opening Settings stalled:
+    // getInstalledApplications, then a getLaunchIntentForPackage BINDER CALL
+    // PER PACKAGE (498 of them on this phone), then getApplicationLabel called
+    // from inside sortedBy's comparator - so O(n log n) label lookups, ~4500
+    // more IPCs. Measured on device: 39 to 809 skipped frames, a 5.0s frame.
+    // Now: one queryIntentActivities call for the whole launchable set, each
+    // label read exactly once, all of it off the main thread. The list is only
+    // needed when the rider actually opens the picker, so an empty first frame
+    // costs nothing.
+    var installedApps by remember { mutableStateOf<List<Pair<String, String>>>(emptyList()) }
+    LaunchedEffect(Unit) {
+        installedApps = withContext(Dispatchers.IO) {
+            runCatching {
+                val launcher = Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER)
+                pm.queryIntentActivities(launcher, 0)
+                    .asSequence()
+                    .map { it.activityInfo.applicationInfo }
+                    .distinctBy { it.packageName }
+                    .map { it.packageName to pm.getApplicationLabel(it).toString() }
+                    .sortedBy { it.second.lowercase() }
+                    .toList()
+            }.getOrDefault(emptyList())
+        }
+    }
+    val labelByPackage = remember(installedApps) { installedApps.toMap() }
     val bondedAudioDevices = remember {
         val adapter = context.getSystemService(BluetoothManager::class.java).adapter
         adapter?.bondedDevices?.filter {
@@ -138,7 +236,7 @@ fun SettingsScreen(
             if (event == Lifecycle.Event.ON_RESUME) {
                 notificationAccessGranted =
                     NotificationManagerCompat.getEnabledListenerPackages(context).contains(context.packageName)
-                accessibilityGranted = com.navigator.app.controller.RemoteControlAccessibilityService.isRunning
+                accessibilityGranted = accessibilityLive()
             }
         }
         lifecycleOwner.lifecycle.addObserver(observer)
@@ -149,7 +247,11 @@ fun SettingsScreen(
     val connected = connectionState == BccuConnectionService.ConnectionState.AUTHENTICATED
     val vehicleName = settings.bondedDeviceName ?: "Not paired"
 
-    fun appLabel(pkg: String): String = try {
+    // Prefer the labels already resolved above - the mirror picker renders
+    // hundreds of rows, and looking each one up again is two binder calls per
+    // row per recomposition. The fallback covers packages not in the launchable
+    // set (the known-nav-app list), which is a handful of lookups at most.
+    fun appLabel(pkg: String): String = labelByPackage[pkg] ?: try {
         pm.getApplicationLabel(pm.getApplicationInfo(pkg, 0)).toString()
     } catch (e: Exception) { pkg }
 
@@ -165,7 +267,7 @@ fun SettingsScreen(
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Icon(
-                OpenDashIcons.ChevronLeft, contentDescription = "Back", tint = Ktm.TextSecondary,
+                NavIcons.ChevronLeft, contentDescription = "Back", tint = Ktm.TextSecondary,
                 modifier = Modifier.clip(CircleShape).clickable(onClick = onBack).padding(8.dp).size(22.dp),
             )
             Text(
@@ -192,6 +294,9 @@ fun SettingsScreen(
                             MonoValue(vehicleName, color = if (connected) Ktm.Green else Ktm.Dim)
                         }
                     }
+                    SettingsRow("Keep session alive", showDivider = true) {
+                        KtmToggle(keepSessionAlive, { keepSessionAlive = it; settings.keepSessionAlive = it })
+                    }
                     SettingsRow("Re-pair vehicle", showDivider = true, onClick = onRepair) {
                         OutlinedPill("RE-PAIR")
                     }
@@ -204,8 +309,54 @@ fun SettingsScreen(
                     SettingsRow("Gemini API key", showDivider = true, onClick = { dialog = SettingsDialog.GEMINI }) {
                         MonoValue(maskKey(geminiKey))
                     }
-                    SettingsRow("Gemini model", showDivider = false, onClick = { dialog = SettingsDialog.GEMINI_MODEL }) {
+                    SettingsRow("Gemini model", showDivider = true, onClick = { dialog = SettingsDialog.GEMINI_MODEL }) {
                         MonoValue("$geminiModel ›")
+                    }
+                    // Proves the key and the model name together, which matters
+                    // most for a hand-typed custom model: the API answers 404
+                    // for a name that doesn't exist and 400/403 for a bad key,
+                    // so one call tells the rider which half to fix.
+                    SettingsRow(
+                        "Test AI connection", showDivider = false,
+                        onClick = if (aiTestState == "Testing…") null else ({
+                            val key = geminiKey.trim()
+                            if (key.isEmpty()) {
+                                aiTestState = "No key"
+                                toast(context, "Add your Gemini API key first")
+                            } else {
+                                aiTestState = "Testing…"
+                                scope.launch {
+                                    val result = GeminiSummarizer(key, geminiModel).testConnection()
+                                    aiTestState = result.fold(
+                                        onSuccess = { "Working" },
+                                        onFailure = { "Failed" },
+                                    )
+                                    toast(
+                                        context,
+                                        result.fold(
+                                            onSuccess = { "$geminiModel replied: ${it.take(40)}" },
+                                            onFailure = { e ->
+                                                val m = e.message ?: "unknown error"
+                                                when {
+                                                    m.contains("404") -> "Model \"$geminiModel\" not found — check the name"
+                                                    m.contains("400") || m.contains("403") -> "API key rejected — check the key"
+                                                    else -> m.take(160)
+                                                }
+                                            },
+                                        ),
+                                    )
+                                }
+                            }
+                        }),
+                    ) {
+                        MonoValue(
+                            if (aiTestState.isEmpty()) "TEST ›" else aiTestState,
+                            color = when (aiTestState) {
+                                "Working" -> Ktm.Green
+                                "Failed", "No key" -> Ktm.Orange
+                                else -> Ktm.TextPrimary
+                            },
+                        )
                     }
                 }
             }
@@ -259,9 +410,11 @@ fun SettingsScreen(
                 }
             }
 
-            // ===== Riding =====
+            // ===== Sounds =====
+            // Split out of the old 15-row "Riding" group: sound, sensors and
+            // recording are three different jobs and were never one list.
             item {
-                GroupCard("Riding") {
+                GroupCard("Sounds") {
                     SettingsRow("Turn approach beeps (stereo)", showDivider = true) {
                         KtmToggle(turnBeepEnabled, { turnBeepEnabled = it; settings.turnBeepEnabled = it })
                     }
@@ -278,7 +431,7 @@ fun SettingsScreen(
                             settings.beepVolumePercent = beepVolume
                         },
                     ) {
-                        MonoValue("$beepVolume% ›")
+                        MonoValue(beepVolumeLabel(beepVolume) + " \u203a")
                     }
                     SettingsRow("Swap beep left/right", showDivider = true) {
                         var swapBeep by remember { mutableStateOf(settings.swapBeepChannels) }
@@ -307,6 +460,18 @@ fun SettingsScreen(
                             }
                         },
                     ) { MonoValue("Play ›") }
+                    SettingsRow("Overspeed alert", showDivider = true) {
+                        KtmToggle(overspeedEnabled, { overspeedEnabled = it; settings.overspeedEnabled = it })
+                    }
+                    SettingsRow("Speed limit", showDivider = false, onClick = { dialog = SettingsDialog.OVERSPEED_LIMIT }) {
+                        MonoValue("$overspeedLimit km/h \u203a")
+                    }
+                }
+            }
+
+            // ===== Engine & sensors =====
+            item {
+                GroupCard("Engine & sensors") {
                     SettingsRow("Engine detect (vibration)", showDivider = true) {
                         KtmToggle(engineDetect, {
                             engineDetect = it; settings.engineDetectEnabled = it
@@ -317,24 +482,44 @@ fun SettingsScreen(
                         val calibrated = !settings.vibrationIdleRms.isNaN()
                         MonoValue(if (calibrated) "Calibrated ›" else "Set up ›")
                     }
-                    SettingsRow(
-                        "Detection sensitivity", showDivider = true,
-                        onClick = {
-                            vibSensitivity = when (vibSensitivity) {
-                                -25 -> 0; 0 -> 25; else -> -25
-                            }
-                            settings.vibrationSensitivity = vibSensitivity
-                            BccuConnectionService.reevaluateEngineDetectIfRunning()
-                        },
-                    ) {
-                        MonoValue(
-                            when {
-                                vibSensitivity < 0 -> "More sensitive ›"
-                                vibSensitivity > 0 -> "Less sensitive ›"
-                                else -> "Normal ›"
-                            }
+                    // Segmented rather than tap-to-cycle: with gloves on you
+                    // want to see all three positions and hit one, not discover
+                    // the order by cycling past it.
+                    SettingsRow("Detection sensitivity", showDivider = false) {
+                        Segmented(
+                            options = listOf("LOW", "NORM", "HIGH"),
+                            selected = when {
+                                vibSensitivity > 0 -> 0
+                                vibSensitivity < 0 -> 2
+                                else -> 1
+                            },
+                            onSelect = { index ->
+                                vibSensitivity = when (index) {
+                                    0 -> 25   // less sensitive
+                                    2 -> -25  // more sensitive
+                                    else -> 0
+                                }
+                                settings.vibrationSensitivity = vibSensitivity
+                                BccuConnectionService.reevaluateEngineDetectIfRunning()
+                            },
                         )
                     }
+                }
+            }
+
+            // ===== Recording =====
+            item {
+                GroupCard("Recording") {
+                    SettingsRow("Auto-record rides", showDivider = false) {
+                        KtmToggle(routeRecordEnabled, {
+                            routeRecordEnabled = it; settings.routeAutoRecordEnabled = it
+                            BccuConnectionService.reevaluateRouteRecordingIfRunning()
+                        })
+                    }
+                    RowNote(
+                        "Starts when the bike authenticates, stops at disconnect. " +
+                            "Car trips and walks are never recorded."
+                    )
                     SettingsRow("Power saver (full rate on charge)", showDivider = true) {
                         KtmToggle(powerSave, {
                             powerSave = it; settings.powerSaveEnabled = it
@@ -343,10 +528,7 @@ fun SettingsScreen(
                         })
                     }
                     SettingsRow("View rides", showDivider = true, onClick = onOpenRides) {
-                        MonoValue("${com.navigator.app.location.RouteRecorder.listRoutes(context).size} ›")
-                    }
-                    SettingsRow("Overspeed alert", showDivider = true) {
-                        KtmToggle(overspeedEnabled, { overspeedEnabled = it; settings.overspeedEnabled = it })
+                        MonoValue("$rideCount ›")
                     }
                     // "Allow all the time" is a SEPARATE grant from the normal
                     // location permission and can't be requested in the same
@@ -415,24 +597,80 @@ fun SettingsScreen(
                             )
                         }
                     }
-                    SettingsRow("Speed limit", showDivider = true, onClick = { dialog = SettingsDialog.OVERSPEED_LIMIT }) {
-                        MonoValue("$overspeedLimit km/h ›")
-                    }
-                    SettingsRow("Auto-record routes while charging", showDivider = true) {
-                        KtmToggle(routeRecordEnabled, {
-                            routeRecordEnabled = it; settings.routeAutoRecordEnabled = it
-                            BccuConnectionService.reevaluateRouteRecordingIfRunning()
-                        })
-                    }
                     SettingsRow(
-                        "Export recorded routes", showDivider = false,
+                        "Share recorded routes", showDivider = true,
                         onClick = { exportRoutes(context) },
                     ) {
-                        val count = remember(routeRecordEnabled) {
-                            com.navigator.app.location.RouteRecorder.listRoutes(context).size
-                        }
-                        MonoValue("$count GPX ›")
+                        MonoValue("$rideCount GPX ›")
                     }
+                    // Whole-history backup: one zip out, the same zip back in on
+                    // a new phone. Without this, switching phones threw away
+                    // every ride and the traffic map built from them.
+                    SettingsRow(
+                        "Back up all rides (.zip)", showDivider = true,
+                        onClick = {
+                            if (rideCount == 0) {
+                                toast(context, "No recorded rides yet")
+                            } else {
+                                zipExportLauncher.launch(
+                                    com.navigator.app.location.RideArchive
+                                        .suggestedName(System.currentTimeMillis())
+                                )
+                            }
+                        },
+                    ) { MonoValue("Save ›") }
+                    SettingsRow(
+                        "Restore rides from a backup", showDivider = false,
+                        onClick = { zipImportLauncher.launch(arrayOf("application/zip", "application/octet-stream", "*/*")) },
+                    ) { MonoValue("Open ›") }
+                    RowNote("Moving to a new phone: back up here, then restore on the new phone. Rides already on this phone are never overwritten.")
+                }
+            }
+
+            // ===== Dash favourites (Home / Work) =====
+            item {
+                GroupCard("Dash favourites") {
+                    SettingsRow(
+                        "Home", showDivider = true,
+                        onClick = { dialog = SettingsDialog.HOME_PLACE },
+                    ) { MonoValue(homeAddress ?: homeDestination ?: "Not set") }
+                    SettingsRow(
+                        "Set Home to current location", showDivider = true,
+                        onClick = {
+                            val value = currentLocationTarget(context)
+                            if (value != null) {
+                                homeDestination = value; settings.homeDestination = value
+                                homeAddress = null; settings.homeAddress = null
+                            } else {
+                                android.widget.Toast.makeText(context, "No GPS fix yet", android.widget.Toast.LENGTH_SHORT).show()
+                            }
+                        },
+                    ) { OutlinedPill("SET") }
+                    SettingsRow(
+                        "Work", showDivider = true,
+                        onClick = { dialog = SettingsDialog.WORK_PLACE },
+                    ) { MonoValue(workAddress ?: workDestination ?: "Not set") }
+                    SettingsRow(
+                        "Set Work to current location", showDivider = true,
+                        onClick = {
+                            val value = currentLocationTarget(context)
+                            if (value != null) {
+                                workDestination = value; settings.workDestination = value
+                                workAddress = null; settings.workAddress = null
+                            } else {
+                                android.widget.Toast.makeText(context, "No GPS fix yet", android.widget.Toast.LENGTH_SHORT).show()
+                            }
+                        },
+                    ) { OutlinedPill("SET") }
+                    SettingsRow(
+                        "Clear both", showDivider = false,
+                        onClick = {
+                            homeDestination = null; settings.homeDestination = null
+                            homeAddress = null; settings.homeAddress = null
+                            workDestination = null; settings.workDestination = null
+                            workAddress = null; settings.workAddress = null
+                        },
+                    ) { OutlinedPill("CLEAR") }
                 }
             }
 
@@ -522,34 +760,91 @@ fun SettingsScreen(
                 }
             }
 
+            // ===== Idle screen =====
+            item {
+                GroupCard("Idle screen") {
+                    SettingsRow("Show info on dash while not navigating", showDivider = true) {
+                        KtmToggle(idleDashEnabled, { idleDashEnabled = it; settings.idleDashEnabled = it })
+                    }
+                    SettingsRow("Clock & date", showDivider = true) {
+                        KtmToggle(idleShowClock, { idleShowClock = it; settings.idleShowClock = it })
+                    }
+                    SettingsRow("Now playing", showDivider = true) {
+                        KtmToggle(idleShowMusic, { idleShowMusic = it; settings.idleShowMusic = it })
+                    }
+                    SettingsRow("Weather", showDivider = true) {
+                        KtmToggle(idleShowWeather, { idleShowWeather = it; settings.idleShowWeather = it })
+                    }
+                    SettingsRow("Song info while next turn is 500 m+", showDivider = true) {
+                        KtmToggle(farTurnMusic, { farTurnMusic = it; settings.farTurnMusicEnabled = it })
+                    }
+                    SettingsRow(
+                        "Rotate every", showDivider = false,
+                        onClick = {
+                            val steps = listOf(5, 8, 10, 15, 20)
+                            val next = steps[(steps.indexOf(idleRotateSec) + 1).mod(steps.size)]
+                            idleRotateSec = next
+                            settings.idleRotateSec = next
+                        },
+                    ) { MonoValue("$idleRotateSec s ›") }
+                }
+            }
+
             // ===== Diagnostics =====
             item {
                 GroupCard("Diagnostics") {
                     SettingsRow("View & share logs", showDivider = true, onClick = onOpenLogs) {
                         Text("›", color = Ktm.Dim, fontSize = 18.sp)
                     }
-                    SettingsRow("Symbol testing", showDivider = true, onClick = onOpenSymbolTest) {
-                        Text("›", color = Ktm.Dim, fontSize = 18.sp)
+                    SettingsRow("Write logs to file", showDivider = true) {
+                        KtmToggle(fileLogging, {
+                            fileLogging = it
+                            settings.fileLoggingEnabled = it
+                            com.navigator.app.logging.AppLogger.fileLoggingEnabled = it
+                        })
                     }
-                    SettingsRow("Turn icon calibration", showDivider = true, onClick = onOpenTurnCalibration) {
-                        Text("›", color = Ktm.Dim, fontSize = 18.sp)
+                    RowNote(
+                        "Off by default. The Logs screen above always works; this only " +
+                            "adds the on-disk copy under Downloads/Navigator, for sharing a " +
+                            "long session after the fact."
+                    )
+                    // Test rows live behind developer mode (ten taps on the
+                    // home-screen wordmark) - they're for validating dash
+                    // behaviour, not something a rider needs day to day.
+                    if (devMode) {
+                        SettingsRow("Developer mode", showDivider = true) {
+                            KtmToggle(true, {
+                                devMode = false
+                                settings.devModeEnabled = false
+                            })
+                        }
+                        RowNote("Turn off to hide the test tools below. Re-enable by tapping the logo on the home screen ten times.")
+                        SettingsRow("Symbol testing", showDivider = true, onClick = onOpenSymbolTest) {
+                            Text("›", color = Ktm.Dim, fontSize = 18.sp)
+                        }
+                        SettingsRow("Developer settings", showDivider = true, onClick = onOpenDeveloper) {
+                            Text("›", color = Ktm.Dim, fontSize = 18.sp)
+                        }
+                        SettingsRow("Turn icon calibration", showDivider = true, onClick = onOpenTurnCalibration) {
+                            Text("›", color = Ktm.Dim, fontSize = 18.sp)
+                        }
+                        SettingsRow(
+                            "Send test notification", showDivider = true,
+                            onClick = {
+                                BccuConnectionService.sendNotificationIfRunning(
+                                    "Hey ${userName.ifBlank { "there" }}",
+                                    BccuProtocol.NotificationIcon.NOTIFICATION_WAYPOINT,
+                                )
+                            },
+                        ) { Text("SEND", color = Ktm.Orange, fontFamily = BarlowCondensed, fontWeight = FontWeight.Bold, fontSize = 12.sp, letterSpacing = 1.sp) }
+                        SettingsRow(
+                            "Send test guidance", showDivider = true,
+                            onClick = {
+                                BccuConnectionService.sendTurnIconIfRunning(BccuProtocol.TurnIcon.GO_STRAIGHT)
+                                BccuConnectionService.sendGuidanceIfRunning("50 m", "Test Road")
+                            },
+                        ) { Text("SEND", color = Ktm.Orange, fontFamily = BarlowCondensed, fontWeight = FontWeight.Bold, fontSize = 12.sp, letterSpacing = 1.sp) }
                     }
-                    SettingsRow(
-                        "Send test notification", showDivider = true,
-                        onClick = {
-                            BccuConnectionService.sendNotificationIfRunning(
-                                "Hey ${userName.ifBlank { "there" }}",
-                                BccuProtocol.NotificationIcon.NOTIFICATION_WAYPOINT,
-                            )
-                        },
-                    ) { Text("SEND", color = Ktm.Orange, fontFamily = BarlowCondensed, fontWeight = FontWeight.Bold, fontSize = 12.sp, letterSpacing = 1.sp) }
-                    SettingsRow(
-                        "Send test guidance", showDivider = true,
-                        onClick = {
-                            BccuConnectionService.sendTurnIconIfRunning(BccuProtocol.TurnIcon.GO_STRAIGHT)
-                            BccuConnectionService.sendGuidanceIfRunning("50 m", "Test Road")
-                        },
-                    ) { Text("SEND", color = Ktm.Orange, fontFamily = BarlowCondensed, fontWeight = FontWeight.Bold, fontSize = 12.sp, letterSpacing = 1.sp) }
                     SettingsRow(
                         "Battery optimization", showDivider = true,
                         onClick = {
@@ -581,18 +876,97 @@ fun SettingsScreen(
             onDismiss = { dialog = SettingsDialog.NONE },
             onConfirm = { userName = it; settings.userName = it; dialog = SettingsDialog.NONE },
         )
+        SettingsDialog.HOME_PLACE -> TextFieldDialog(
+            title = "Home", initial = homeAddress ?: homeDestination.orEmpty(), label = "Address or lat,lon",
+            onDismiss = { dialog = SettingsDialog.NONE },
+            onConfirm = {
+                val entered = it.trim()
+                // A typed address is both the routing target and the label the
+                // dash shows; "lat,lon" from the SET button has no label.
+                homeDestination = entered.ifEmpty { null }
+                homeAddress = entered.ifEmpty { null }
+                settings.homeDestination = homeDestination
+                settings.homeAddress = homeAddress
+                dialog = SettingsDialog.NONE
+            },
+        )
+        SettingsDialog.WORK_PLACE -> TextFieldDialog(
+            title = "Work", initial = workAddress ?: workDestination.orEmpty(), label = "Address or lat,lon",
+            onDismiss = { dialog = SettingsDialog.NONE },
+            onConfirm = {
+                val entered = it.trim()
+                workDestination = entered.ifEmpty { null }
+                workAddress = entered.ifEmpty { null }
+                settings.workDestination = workDestination
+                settings.workAddress = workAddress
+                dialog = SettingsDialog.NONE
+            },
+        )
         SettingsDialog.GEMINI -> TextFieldDialog(
             title = "Gemini API key", initial = geminiKey, label = "API key",
             onDismiss = { dialog = SettingsDialog.NONE },
             onConfirm = { geminiKey = it; settings.geminiApiKey = it; dialog = SettingsDialog.NONE },
         )
-        SettingsDialog.GEMINI_MODEL -> SingleChoiceDialog(
-            title = "Gemini model",
-            options = AppSettings.GEMINI_MODELS,
-            labelFor = { it },
+        SettingsDialog.GEMINI_MODEL -> {
+            LaunchedEffect(Unit) {
+                val key = geminiKey.trim()
+                if (key.isNotEmpty() && fetchedModels.isEmpty()) {
+                    GeminiSummarizer(key, geminiModel).listModels()
+                        .onSuccess { if (it.isNotEmpty()) fetchedModels = it }
+                }
+            }
+            SingleChoiceDialog(
+            title = if (fetchedModels.isEmpty()) "Gemini model" else "Gemini model (live)",
+            // Built-ins, then anything the rider typed in before, then the
+            // free-text row - so a model Google released after this build can
+            // still be selected, and stays in the list once entered.
+            options = (fetchedModels.ifEmpty { AppSettings.GEMINI_MODELS } +
+                customGeminiModels.sorted() + geminiModel).distinct() +
+                AppSettings.GEMINI_MODEL_CUSTOM,
+            labelFor = { if (it == AppSettings.GEMINI_MODEL_CUSTOM) "Custom model…" else it },
             selected = geminiModel,
             onDismiss = { dialog = SettingsDialog.NONE },
-            onSelect = { geminiModel = it; settings.geminiModel = it; dialog = SettingsDialog.NONE },
+            onSelect = {
+                if (it == AppSettings.GEMINI_MODEL_CUSTOM) {
+                    dialog = SettingsDialog.GEMINI_MODEL_CUSTOM
+                } else {
+                    geminiModel = it; settings.geminiModel = it; dialog = SettingsDialog.NONE
+                }
+            },
+            // Only hand-typed entries can be removed - a mistyped model name
+            // would otherwise be stuck in the list forever.
+            removable = { it in customGeminiModels },
+            onRemove = { gone ->
+                customGeminiModels = customGeminiModels - gone
+                settings.customGeminiModels = customGeminiModels
+                if (geminiModel == gone) {
+                    geminiModel = AppSettings.DEFAULT_GEMINI_MODEL
+                    settings.geminiModel = geminiModel
+                }
+            },
+            )
+        }
+        SettingsDialog.GEMINI_MODEL_CUSTOM -> TextFieldDialog(
+            title = "Custom Gemini model",
+            // Empty, not the current model: this row exists to ADD a newly
+            // released name, and prefilling means clearing it first every time.
+            initial = "",
+            label = "e.g. gemini-3-flash",
+            onDismiss = { dialog = SettingsDialog.NONE },
+            onConfirm = { entered ->
+                val name = entered.trim()
+                if (name.isNotEmpty()) {
+                    geminiModel = name
+                    settings.geminiModel = name
+                    // Remember it only if it isn't already a built-in, so the
+                    // picker doesn't grow duplicate rows.
+                    if (name !in AppSettings.GEMINI_MODELS) {
+                        customGeminiModels = customGeminiModels + name
+                        settings.customGeminiModels = customGeminiModels
+                    }
+                }
+                dialog = SettingsDialog.NONE
+            },
         )
         SettingsDialog.OVERSPEED_LIMIT -> TextFieldDialog(
             title = "Overspeed limit (km/h)", initial = overspeedLimit.toString(), label = "km/h",
@@ -630,7 +1004,7 @@ fun SettingsScreen(
         )
         SettingsDialog.MIRROR_APPS -> MultiChoiceDialog(
             title = "Mirror-from apps",
-            options = installedApps.map { it.packageName },
+            options = installedApps.map { it.first },
             labelFor = { appLabel(it) },
             selected = sourceApps,
             onDismiss = { dialog = SettingsDialog.NONE },
@@ -645,6 +1019,15 @@ fun SettingsScreen(
 
 /** Best-available last known fix across providers (GPS preferred). */
 @SuppressLint("MissingPermission")
+/**
+ * Current position as a Google Maps navigation target, or null without a fix.
+ * Locale.US on purpose: a comma-decimal locale would corrupt "lat,lon".
+ */
+private fun currentLocationTarget(context: android.content.Context): String? {
+    val loc = lastKnownLocation(context) ?: return null
+    return "%.6f,%.6f".format(java.util.Locale.US, loc.latitude, loc.longitude)
+}
+
 private fun lastKnownLocation(context: android.content.Context): android.location.Location? {
     if (androidx.core.content.ContextCompat.checkSelfPermission(
             context, android.Manifest.permission.ACCESS_FINE_LOCATION
@@ -667,7 +1050,7 @@ private fun exportRoutes(context: android.content.Context) {
         return
     }
     val uris = ArrayList(files.map {
-        androidx.core.content.FileProvider.getUriForFile(context, "com.navigator.app.fileprovider", it)
+        androidx.core.content.FileProvider.getUriForFile(context, "${com.navigator.app.BuildConfig.APPLICATION_ID}.fileprovider", it)
     })
     val intent = Intent(Intent.ACTION_SEND_MULTIPLE).apply {
         type = "application/gpx+xml"
@@ -675,6 +1058,10 @@ private fun exportRoutes(context: android.content.Context) {
         addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
     }
     context.startActivity(Intent.createChooser(intent, "Export routes"))
+}
+
+private fun toast(context: android.content.Context, message: String) {
+    android.widget.Toast.makeText(context, message, android.widget.Toast.LENGTH_LONG).show()
 }
 
 private fun maskKey(key: String): String = when {
@@ -723,6 +1110,9 @@ private fun TextFieldDialog(
 private fun <T> SingleChoiceDialog(
     title: String, options: List<T>, labelFor: (T) -> String, selected: T?,
     onDismiss: () -> Unit, onSelect: (T) -> Unit,
+    /** Rows this returns true for get a "✕" that calls [onRemove]. */
+    removable: (T) -> Boolean = { false },
+    onRemove: (T) -> Unit = {},
 ) {
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -745,7 +1135,18 @@ private fun <T> SingleChoiceDialog(
                                 selected = selected == option, onClick = { onSelect(option) },
                                 colors = RadioButtonDefaults.colors(selectedColor = Ktm.Orange, unselectedColor = Ktm.Dim),
                             )
-                            Text(labelFor(option), color = Ktm.TextPrimary, fontFamily = Barlow)
+                            Text(
+                                labelFor(option), color = Ktm.TextPrimary, fontFamily = Barlow,
+                                modifier = Modifier.weight(1f),
+                            )
+                            if (removable(option)) {
+                                Text(
+                                    "✕", color = Ktm.Dim, fontFamily = Barlow,
+                                    modifier = Modifier
+                                        .clickable { onRemove(option) }
+                                        .padding(horizontal = 10.dp, vertical = 2.dp),
+                                )
+                            }
                         }
                     }
                 }
@@ -786,4 +1187,16 @@ private fun <T> MultiChoiceDialog(
         },
         confirmButton = { TextButton(onClick = onDismiss) { Text("DONE", color = Ktm.Orange) } },
     )
+}
+
+/**
+ * Beep volume as a word. The underlying value is a percentage, but "60%" of a
+ * tone the rider has never measured means nothing - what they want to know is
+ * whether it will cut through the wind.
+ */
+private fun beepVolumeLabel(percent: Int): String = when {
+    percent <= 20 -> "Quiet"
+    percent <= 35 -> "Low"
+    percent <= 60 -> "Medium"
+    else -> "Loud"
 }

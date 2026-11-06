@@ -32,6 +32,20 @@ object TurnIconHeuristic {
 
     private const val SAMPLE_SIZE = 48
 
+    // A Maps maneuver glyph is a white shape on transparency: it covers at
+    // most a third of the tile and has no colour at all. Anything that fills
+    // the tile, or carries colour, is something else Maps puts in the very
+    // same largeIcon slot - a street-view thumbnail, a red traffic-incident
+    // badge, a profile avatar.
+    //
+    // Measured on the 43 icons this app captured as "unknown" on a rider's
+    // phone: the 33 genuine maneuvers topped out at 0.388 opaque and 0.000
+    // saturation, while the 10 photos and badges started at 0.800 opaque and
+    // 0.096 saturation. These cutoffs sit in that gap with better than 2x
+    // headroom and separate all 43 correctly.
+    private const val MANEUVER_MAX_OPAQUE_FRACTION = 0.5
+    private const val MANEUVER_MAX_SATURATION = 0.05
+
     // Severity bands, calibrated from real Google Maps arrows on hardware
     // (2026-07-06 logs): a straight arrow measured a full-height left/right ink
     // ratio of ~1.00, while a real 90-degree "Turn left" measured only ~1.14 -
@@ -57,8 +71,13 @@ object TurnIconHeuristic {
     private const val STRAIGHT_TOP_MAX = 1.35
 
     fun guessDirection(context: Context, sbn: StatusBarNotification): BccuProtocol.TurnIcon? {
-        parseManeuverFromText(collectText(sbn))?.let {
-            AppLogger.log("TurnIcon", "Maneuver from text -> ${it.name}")
+        // The parsed text is logged alongside the verdict: when this mapping
+        // goes wrong on a rider's phone, the log has to show WHAT was parsed,
+        // not just what it decided. Diagnosing the "destination flag for a
+        // whole ride" report needed exactly this line and it wasn't there.
+        val maneuverText = collectText(sbn)
+        parseManeuverFromText(maneuverText)?.let {
+            AppLogger.log("TurnIcon", "Maneuver from text \"${maneuverText.trim().take(80)}\" -> ${it.name}")
             return it
         }
 
@@ -66,6 +85,14 @@ object TurnIconHeuristic {
 
         // 1. User's manual calibration (exact per-bitmap override) wins.
         IconHashCache.lookup(bitmap, context)?.let { return it }
+
+        // 1b. Is this even a maneuver icon? Maps posts street-view photos,
+        // traffic-incident badges and avatars through the same slot, and the
+        // ink heuristic below cannot say "no" - a photograph has ink on both
+        // halves, so it always resolved to SOME turn and put a confident,
+        // completely wrong arrow on the dash. Leaving the arrow untouched is
+        // the right answer for a notification that isn't a maneuver.
+        if (!looksLikeManeuverIcon(bitmap)) return null
 
         // 2. On-device TFLite classifier (ported from the KTM Gen-3 companion
         //    app). Purpose-trained on nav maneuver icons, so it recognises the
@@ -106,17 +133,57 @@ object TurnIconHeuristic {
         }
     }
 
+    /** See [MANEUVER_MAX_OPAQUE_FRACTION]: white-on-transparent glyph, or something else entirely? */
+    private fun looksLikeManeuverIcon(bitmap: Bitmap): Boolean {
+        val width = bitmap.width
+        val height = bitmap.height
+        if (width <= 0 || height <= 0) return false
+        val pixels = IntArray(width * height)
+        bitmap.getPixels(pixels, 0, width, 0, 0, width, height)
+        var opaque = 0L
+        var saturationSum = 0.0
+        for (pixel in pixels) {
+            if (((pixel ushr 24) and 0xFF) <= 32) continue
+            opaque++
+            val r = (pixel shr 16) and 0xFF
+            val g = (pixel shr 8) and 0xFF
+            val b = pixel and 0xFF
+            saturationSum += (maxOf(r, g, b) - minOf(r, g, b)) / 255.0
+        }
+        if (opaque == 0L) return false
+        val opaqueFraction = opaque.toDouble() / pixels.size
+        val saturation = saturationSum / opaque
+        val maneuver = opaqueFraction < MANEUVER_MAX_OPAQUE_FRACTION && saturation < MANEUVER_MAX_SATURATION
+        if (!maneuver) {
+            AppLogger.log(
+                "TurnIcon",
+                "Not a maneuver icon (opaque=${"%.2f".format(opaqueFraction)} sat=${"%.2f".format(saturation)}) - leaving the dash arrow alone",
+            )
+        }
+        return maneuver
+    }
+
     private fun ratio(a: Long, b: Long): Double {
         val hi = maxOf(a, b); val lo = minOf(a, b)
         return hi.toDouble() / lo.coerceAtLeast(1)
     }
 
-    /** Gather every text field a nav app might carry the maneuver phrase in. */
+    /**
+     * Gather the fields that carry the MANEUVER instruction.
+     *
+     * Deliberately NOT sub/info/summary text. Those hold the trip-status row
+     * ("9 min - 2.4 km - Arrive 16:51"), and folding it into the same string
+     * made every update match the arrival rule below: a rider's whole ride
+     * showed the chequered destination flag on the dash instead of turns
+     * (real log, 2026-10-12: title="Head toward 6th A Cross Rd", eta=16:51,
+     * "Maneuver from text -> END" on every single notification repost).
+     * [AppNotificationListener] reads the status row separately for ETA and
+     * remaining distance, which is the only thing it is good for.
+     */
     private fun collectText(sbn: StatusBarNotification): String {
         val e = sbn.notification.extras
         val keys = listOf(
             Notification.EXTRA_TITLE, Notification.EXTRA_TEXT, Notification.EXTRA_BIG_TEXT,
-            Notification.EXTRA_SUB_TEXT, Notification.EXTRA_INFO_TEXT, Notification.EXTRA_SUMMARY_TEXT,
         )
         val sb = StringBuilder()
         for (k in keys) {
@@ -125,6 +192,33 @@ object TurnIconHeuristic {
         sbn.notification.tickerText?.let { sb.append(' ').append(it) }
         return sb.toString().lowercase()
     }
+
+    /**
+     * Phrases that mean "you are there", as opposed to the bare words
+     * "arrive"/"destination" that also appear in an ETA line. Matching the
+     * bare words is what put the dash on the destination flag for an entire
+     * ride, so arrival now needs an actual arrival sentence.
+     */
+    private val ARRIVAL_PHRASES = listOf(
+        "you have arrived", "you've arrived", "you are arriving", "you're arriving",
+        "arriving at your destination", "arrive at your destination",
+        "reached your destination", "destination reached",
+        "your destination is", "destination is on", "destination will be on",
+        "destination ahead", "destination on the",
+    )
+    /** "Arrived" as a whole word - Maps' own final instruction - but never "arrive 16:51". */
+    private val ARRIVED_WORD = Regex("""\barrived\b""")
+    /**
+     * Maps' last step reads "Arrive at <place>", which IS an arrival - while
+     * "Arrive at 16:51" is an ETA. The negative look-ahead for a clock time is
+     * what tells them apart.
+     */
+    private val ARRIVE_AT_PLACE = Regex("""\barrive\s+(?:at|in|on)\s+(?!\d{1,2}\s*[:.]\s*\d{2})""")
+
+    private fun isArrival(t: String): Boolean =
+        ARRIVAL_PHRASES.any { t.contains(it) } ||
+            ARRIVED_WORD.containsMatchIn(t) ||
+            ARRIVE_AT_PLACE.containsMatchIn(t)
 
     /**
      * Map an instruction string to an icon. Order matters - the most specific
@@ -172,8 +266,8 @@ object TurnIconHeuristic {
         if ((t.contains("exit") || t.contains("ramp") || t.contains("off-ramp")) && (left || right)) {
             return if (left) BccuProtocol.TurnIcon.LEAVE_HIGHWAY_LEFT_LANE else BccuProtocol.TurnIcon.LEAVE_HIGHWAY_RIGHT_LANE
         }
-        // Arrival / departure.
-        if (t.contains("destination") || t.contains("arrive") || t.contains("you have arrived")) {
+        // Arrival - a real arrival sentence only, never an ETA's "Arrive 16:51".
+        if (isArrival(t)) {
             return BccuProtocol.TurnIcon.END
         }
         // Plain turn: this is a normal ~90° turn, so QUITE_* (not LIGHT_*).

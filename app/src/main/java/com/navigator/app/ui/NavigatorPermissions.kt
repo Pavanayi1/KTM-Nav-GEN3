@@ -8,12 +8,12 @@ import androidx.core.app.NotificationManagerCompat
 import androidx.core.content.ContextCompat
 
 /**
- * Single source of truth for the runtime permissions OpenDash needs and
+ * Single source of truth for the runtime permissions Navigator needs and
  * whether they're currently granted. Centralized so onboarding, the pairing
  * screen, and MainActivity all agree — and so scanning can be gated on the
  * Bluetooth permission instead of crashing when it's missing.
  */
-object OpenDashPermissions {
+object NavigatorPermissions {
 
     /** Runtime permissions to request together (varies by SDK level). */
     fun runtimePermissions(): Array<String> {

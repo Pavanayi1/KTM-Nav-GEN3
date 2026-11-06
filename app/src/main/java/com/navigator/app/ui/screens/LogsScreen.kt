@@ -31,10 +31,11 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.FileProvider
 import com.navigator.app.logging.AppLogger
+import com.navigator.app.ui.components.ScreenHeader
 import com.navigator.app.ui.theme.BarlowCondensed
 import com.navigator.app.ui.theme.JetBrainsMono
 import com.navigator.app.ui.theme.Ktm
-import com.navigator.app.ui.theme.OpenDashIcons
+import com.navigator.app.ui.theme.NavIcons
 
 @Composable
 fun LogsScreen(onBack: () -> Unit) {
@@ -44,18 +45,7 @@ fun LogsScreen(onBack: () -> Unit) {
     Column(
         modifier = Modifier.fillMaxSize().background(Ktm.Screen).systemBarsPadding(),
     ) {
-        Row(
-            modifier = Modifier.fillMaxWidth().padding(start = 8.dp, end = 16.dp, top = 8.dp, bottom = 6.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Icon(
-                OpenDashIcons.ChevronLeft, contentDescription = "Back", tint = Ktm.TextSecondary,
-                modifier = Modifier.clip(CircleShape).clickable(onClick = onBack).padding(8.dp).size(22.dp),
-            )
-            Text(
-                "LOGS", color = Ktm.White, fontFamily = BarlowCondensed, fontWeight = FontWeight.Bold,
-                fontStyle = FontStyle.Italic, fontSize = 28.sp, modifier = Modifier.weight(1f).padding(start = 4.dp),
-            )
+        ScreenHeader("Logs", onBack = onBack) {
             Text(
                 "SHARE", color = Ktm.Orange, fontFamily = BarlowCondensed, fontWeight = FontWeight.Bold,
                 fontSize = 13.sp, letterSpacing = 1.sp,
@@ -63,8 +53,12 @@ fun LogsScreen(onBack: () -> Unit) {
                     .clip(RoundedCornerShape(7.dp))
                     .border(1.dp, Ktm.Orange, RoundedCornerShape(7.dp))
                     .clickable {
-                        val file = AppLogger.currentLogFile() ?: return@clickable
-                        val uri = FileProvider.getUriForFile(context, "com.navigator.app.fileprovider", file)
+                        val file = AppLogger.snapshotForShare() ?: return@clickable
+                        val uri = FileProvider.getUriForFile(
+                            context,
+                            "${com.navigator.app.BuildConfig.APPLICATION_ID}.fileprovider",
+                            file,
+                        )
                         val intent = Intent(Intent.ACTION_SEND).apply {
                             type = "text/plain"
                             putExtra(Intent.EXTRA_STREAM, uri)

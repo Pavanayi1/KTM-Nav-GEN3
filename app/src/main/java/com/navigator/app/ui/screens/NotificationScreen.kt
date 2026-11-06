@@ -9,6 +9,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.systemBarsPadding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
@@ -80,26 +81,36 @@ fun NotificationScreen(settings: AppSettings, scrollIndex: Int = 0) {
             .systemBarsPadding()
             .padding(top = 4.dp),
     ) {
-        // Header: FEED + Mirror quick-mute toggle.
+        // Header: eyebrow + live state, matching the Direction screen so the two
+        // on-ride surfaces read as siblings rather than two different apps.
         Row(
-            modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 12.dp),
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 10.dp),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.SpaceBetween,
         ) {
-            Text("FEED", color = Ktm.White, fontFamily = BarlowCondensed, fontWeight = FontWeight.Bold,
-                fontStyle = FontStyle.Italic, fontSize = 28.sp, letterSpacing = 0.3.sp)
+            com.navigator.app.ui.components.Eyebrow(
+                "Mirroring", color = Ktm.Dim, fontSize = 11, letterSpacing = 2.4,
+            )
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Text("MIRROR", color = Ktm.Muted2, fontFamily = BarlowCondensed,
-                    fontSize = 11.sp, letterSpacing = 1.sp, modifier = Modifier.padding(end = 8.dp))
-                KtmToggle(
-                    checked = mirrorEnabled,
-                    onCheckedChange = {
-                        mirrorEnabled = it
-                        settings.mirrorEnabled = it
-                    },
+                androidx.compose.foundation.layout.Box(
+                    modifier = Modifier
+                        .size(7.dp)
+                        .clip(androidx.compose.foundation.shape.CircleShape)
+                        .background(if (mirrorEnabled) Ktm.Green else Ktm.Dim3),
+                )
+                Text(
+                    if (mirrorEnabled) "LIVE" else "MUTED",
+                    color = Ktm.Muted, fontFamily = com.navigator.app.ui.theme.JetBrainsMono,
+                    fontSize = 11.sp, modifier = Modifier.padding(start = 7.dp),
                 )
             }
         }
+        Text(
+            "FEED",
+            color = Ktm.White, fontFamily = BarlowCondensed, fontWeight = FontWeight.Bold,
+            fontStyle = FontStyle.Italic, fontSize = 30.sp, letterSpacing = (-0.3).sp,
+            modifier = Modifier.padding(start = 20.dp, bottom = 12.dp),
+        )
 
         Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
             when {

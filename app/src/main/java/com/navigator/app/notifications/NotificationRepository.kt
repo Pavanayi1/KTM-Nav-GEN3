@@ -38,8 +38,28 @@ object NotificationRepository {
     private val _navGuidance = MutableStateFlow<NavGuidance?>(null)
     val navGuidance: StateFlow<NavGuidance?> = _navGuidance
 
+    /** Currently-playing track ("Title by Artist"), fed by MediaTrackMonitor via the service. */
+    private val _currentTrack = MutableStateFlow<String?>(null)
+    val currentTrack: StateFlow<String?> = _currentTrack
+
+    fun updateTrack(track: String) {
+        _currentTrack.value = track
+    }
+
+    /**
+     * When the last turn-by-turn update landed, on the monotonic clock. The
+     * connection service's idle shutdown reads this: a rider mid-route is
+     * plainly still riding, even if the bike link hasn't come up yet, and
+     * killing the service under them is how the dash goes blank for the rest
+     * of the trip.
+     */
+    @Volatile
+    var lastNavGuidanceElapsedMs: Long = 0L
+        private set
+
     fun updateNavGuidance(guidance: NavGuidance) {
         _navGuidance.value = guidance
+        lastNavGuidanceElapsedMs = android.os.SystemClock.elapsedRealtime()
     }
 
     fun addEntry(entry: NotificationEntry) {
@@ -64,5 +84,6 @@ object NotificationRepository {
         _currentNavText.value = null
         _currentNavPackage.value = null
         _navGuidance.value = null
+        lastNavGuidanceElapsedMs = 0L
     }
 }

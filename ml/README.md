@@ -1,6 +1,6 @@
-# Independent maneuver-icon model for OpenDash
+# Independent maneuver-icon model for Navigator
 
-This trains OpenDash's turn-icon recogniser from scratch, so the app can ship
+This trains Navigator's turn-icon recogniser from scratch, so the app can ship
 **free forever** with no proprietary model. It recognises the nav app's maneuver
 icon (Google Maps, etc.) and outputs the KTM dash turn-icon code — including
 every roundabout exit — which a pixel heuristic can't do.
@@ -12,7 +12,7 @@ Google Maps ships its maneuver icons as **named** drawables
 dataset with zero hand-labeling and never touch anyone's trained weights.
 
 ## 1. Build the dataset (already done once, committed in `dataset/`)
-On a phone/emulator with Google Maps installed and a debug OpenDash build:
+On a phone/emulator with Google Maps installed and a debug Navigator build:
 
 ```
 adb shell am start -n com.navigator.app/.ui.MainActivity
@@ -55,7 +55,7 @@ The icon model handles direction. Two places OCR helps as a *secondary* signal:
   roundabout icon. On-device ML Kit text recognition on the icon crop could read
   it to pick the exact `RAB_SECT_n` rather than a generic roundabout.
 - **Instruction text**: when a nav app *does* put words in the notification
-  ("At the roundabout, take the 2nd exit", "Sharp left"), OpenDash already parses
+  ("At the roundabout, take the 2nd exit", "Sharp left"), Navigator already parses
   that in `TurnIconHeuristic.parseManeuverFromText` — no OCR needed there.
 OCR of the icon glyph itself is not useful (the arrows carry no text). Keep the
 CNN as the primary path; add ML Kit text recognition only for the exit-number

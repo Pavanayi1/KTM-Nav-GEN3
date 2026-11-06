@@ -19,7 +19,7 @@ import com.navigator.app.ble.BccuProtocol.TurnIcon
 /**
  * Draws a clear, schematic arrow for each dash [TurnIcon] so the rider can
  * visually match a captured Google Maps maneuver bitmap to the correct dash
- * symbol in the calibration screen. These are OpenDash's own drawings, not the
+ * symbol in the calibration screen. These are Navigator's own drawings, not the
  * dash's firmware glyphs (those render on the bike, not in the app) - but they
  * mirror the maneuver each icon represents (direction, severity, U-turn,
  * roundabout, keep/fork, ramp) closely enough to pick the right one at a glance.

@@ -8,7 +8,7 @@ import com.navigator.app.ble.BccuProtocol.HandlebarButton.UP
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 
-enum class ControllerScreen { IDLE, GRID, NOTIFICATIONS, DIRECTION }
+enum class ControllerScreen { IDLE, GRID, NOTIFICATIONS, DIRECTION, MUSIC }
 
 /**
  * Pure Kotlin (no Android dependencies) state machine resolving the
@@ -44,8 +44,14 @@ class ControllerStateMachine(private val actions: Actions) {
         fun openMaps()
         fun bringAppToForeground()
         fun showWatchdogWarning()
+        /** Open the Rides list (recorded routes + analytics). */
+        fun openRides()
         /** Fully quit: stop the connection service (removes its notification) and kill the app task. */
         fun exitApp()
+        /** Show the handlebar remote's mode picker (Controller / Music / Intercom / Bike off). */
+        fun showRemoteModePicker()
+        /** Open Rider Intercom, to start or join a call with the pillion. */
+        fun openIntercom()
     }
 
     /** Immutable snapshot of everything the UI renders from. */
@@ -55,7 +61,13 @@ class ControllerStateMachine(private val actions: Actions) {
         val notificationScrollIndex: Int = 0,
     )
 
-    val gridItems = listOf("Notification", "Direction", "Home", "Exit")
+    // Order matches the home grid's visual order exactly - the remote walks
+    // this list, so a mismatch would move the focus ring to the wrong tile.
+    // Joined to GridMenuScreen's `tiles` by POSITION ONLY - the screen draws
+    // them, this list decides what each index does and is what the handlebar
+    // D-pad cycles. Add a tile to one and not the other and every tile after
+    // it silently opens the wrong screen.
+    val gridItems = listOf("Notification", "Direction", "Music", "Intercom", "Rides", "Remote", "Home", "Exit")
 
     private val _state = MutableStateFlow(UiState())
     val state: StateFlow<UiState> = _state
@@ -123,6 +135,13 @@ class ControllerStateMachine(private val actions: Actions) {
                 BACK -> update { it.copy(screen = ControllerScreen.GRID) }
                 UP, DOWN -> {}
             }
+
+            ControllerScreen.MUSIC -> when (button) {
+                SET -> actions.playPauseMedia()
+                UP -> actions.nextTrack()
+                DOWN -> actions.previousTrack()
+                BACK -> update { it.copy(screen = ControllerScreen.GRID) }
+            }
         }
     }
 
@@ -132,7 +151,7 @@ class ControllerStateMachine(private val actions: Actions) {
      * at the grid/idle top level (letting Android minimize the app as usual).
      */
     fun touchBack(): Boolean = when (screen) {
-        ControllerScreen.NOTIFICATIONS, ControllerScreen.DIRECTION -> {
+        ControllerScreen.NOTIFICATIONS, ControllerScreen.DIRECTION, ControllerScreen.MUSIC -> {
             update { it.copy(screen = ControllerScreen.GRID, notificationScrollIndex = 0) }
             true
         }
@@ -159,6 +178,19 @@ class ControllerStateMachine(private val actions: Actions) {
         when (gridItems[gridSelection]) {
             "Notification" -> update { it.copy(screen = ControllerScreen.NOTIFICATIONS) }
             "Direction" -> update { it.copy(screen = ControllerScreen.DIRECTION) }
+            "Music" -> update { it.copy(screen = ControllerScreen.MUSIC) }
+            "Remote" -> {
+                actions.showRemoteModePicker()
+                update { it.copy(screen = ControllerScreen.IDLE) }
+            }
+            "Intercom" -> {
+                actions.openIntercom()
+                update { it.copy(screen = ControllerScreen.IDLE) }
+            }
+            "Rides" -> {
+                actions.openRides()
+                update { it.copy(screen = ControllerScreen.IDLE) }
+            }
             "Home" -> {
                 actions.minimizeToHome()
                 update { it.copy(screen = ControllerScreen.IDLE) }

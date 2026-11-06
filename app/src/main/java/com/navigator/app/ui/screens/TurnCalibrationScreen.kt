@@ -48,11 +48,12 @@ import com.navigator.app.settings.AppSettings
 import com.navigator.app.ui.components.Eyebrow
 import com.navigator.app.ui.components.TurnIconGlyph
 import com.navigator.app.ui.components.TurnIconRef
+import com.navigator.app.ui.components.ScreenHeader
 import com.navigator.app.ui.theme.Barlow
 import com.navigator.app.ui.theme.BarlowCondensed
 import com.navigator.app.ui.theme.JetBrainsMono
 import com.navigator.app.ui.theme.Ktm
-import com.navigator.app.ui.theme.OpenDashIcons
+import com.navigator.app.ui.theme.NavIcons
 
 /**
  * Turn-icon calibration. Google Maps (and most nav apps) reuse a fixed set of
@@ -80,20 +81,7 @@ fun TurnCalibrationScreen(onBack: () -> Unit) {
     Column(
         modifier = Modifier.fillMaxSize().background(Ktm.Screen).systemBarsPadding(),
     ) {
-        Row(
-            modifier = Modifier.fillMaxWidth().padding(start = 8.dp, end = 16.dp, top = 8.dp, bottom = 4.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Icon(
-                OpenDashIcons.ChevronLeft, contentDescription = "Back", tint = Ktm.TextSecondary,
-                modifier = Modifier.clip(CircleShape).clickable(onClick = onBack).padding(8.dp).size(22.dp),
-            )
-            Text(
-                "TURN ICON CALIBRATION", color = Ktm.White, fontFamily = BarlowCondensed,
-                fontWeight = FontWeight.Bold, fontStyle = FontStyle.Italic, fontSize = 21.sp,
-                modifier = Modifier.padding(start = 4.dp),
-            )
-        }
+        ScreenHeader("Turn icon calibration", onBack = onBack)
 
         if (icons.isEmpty()) {
             Box(modifier = Modifier.fillMaxSize().padding(28.dp), contentAlignment = Alignment.Center) {
@@ -180,7 +168,7 @@ private fun CalibrationRow(
             // captured Maps bitmap, so "captured vs. dash symbol" reads at a glance.
             if (assignedIcon != null) {
                 Icon(
-                    OpenDashIcons.ChevronLeft, contentDescription = null, tint = Ktm.Dim,
+                    NavIcons.ChevronLeft, contentDescription = null, tint = Ktm.Dim,
                     modifier = Modifier.padding(horizontal = 4.dp).size(16.dp),
                 )
                 Box(

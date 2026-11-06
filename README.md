@@ -26,13 +26,65 @@
 
 ## What it does
 
-Three jobs, all on your phone, with no account and no server.
+Four jobs, all on your phone, with no account and no server.
 
 | | |
 |---|---|
 | **Push to the dash** | Google Maps turn-by-turn, phone notifications, now-playing and idle info, mirrored onto the bike's own display over Bluetooth. |
 | **Pull from the handlebar** | The bike's four handlebar buttons become a controller for your phone — a D-pad over any app, or music transport. |
+| **Talk to your pillion** | A built-in Bluetooth intercom between your phone and your pillion's. Hold SET on the handlebar to talk; your music keeps playing. |
 | **Record and analyse the ride** | Rides record themselves as standard GPX, then come back as a map, charts, detected events, a smoothness score and a fuel estimate. |
+
+---
+
+## Rider Intercom — talk to your pillion (new in R76)
+
+Your phone and your pillion's phone link directly over Bluetooth. No SIM, no data, no server. Voice plays
+on the *media* channel, so music keeps playing in stereo in both helmets and ducks while someone talks.
+
+**What you need**
+
+- **Rider:** Navigator R76 or later (Android 10+).
+- **Pillion:** the small **Rider Intercom** companion app from the same release
+  (`RiderIntercom-companion.apk`, Android 10+). Your pillion doesn't need the bike app. Any rider can
+  also use Navigator itself as the other end, since both speak the same protocol.
+- A Bluetooth headset in each helmet is ideal. Phone speakers work for a test.
+
+**One-time setup**
+
+1. **Pair the two phones** with each other in Android's own Bluetooth settings. The intercom only lists
+   phones Android has already paired; it never pairs by itself.
+2. Open the intercom on both phones (Navigator: the **INTERCOM** tile on the home screen) and allow
+   microphone, Bluetooth and notifications.
+3. On Xiaomi, Oppo/Realme, vivo, OnePlus, Samsung or Huawei phones, follow **Keeping the call alive** on
+   the intercom's start screen. Those phones kill background calls unless told not to.
+
+**Every ride**
+
+1. On one phone tap **Host**. On the other, pick that phone from the list and tap **Join**.
+2. Talk. The channel opens on your voice and closes half a second after you stop. If the other person is
+   already talking you hear a short beep instead of talking over them. **Hold to talk** on screen
+   overrides the voice detector.
+3. Start the call **before you mount the phone**. Android won't let an app switch the microphone on from
+   the background, so starting a call is always a tap on the phone; the handlebar then controls it.
+
+**Handlebar control (rider)**
+
+Long-press **UP** to open the mode picker and choose **Intercom**. Then:
+
+| Button | Does |
+|---|---|
+| **SET, hold** | Push-to-talk: press opens your mic, release closes it |
+| UP / DOWN | Volume up / down (your pillion's voice and your music together) |
+| BACK | Noise suppression Off → Light → Strong (shown on the dash) |
+| BACK twice | End the call |
+| UP long / DOWN long | Mode picker / Google Maps, as in every mode |
+
+Pressing SET with no call running shows **No intercom call** on the dash. The mic always closes when you
+let go of SET, when the dash disconnects, when the call ends, or after 60 seconds of continuous hold.
+
+> Status: working phone-to-phone on the bench. **Not yet road-tested.** Range, wind noise at speed and
+> screen-off survival on long rides are what the next rides will tell us. Reports welcome.
 
 ---
 
@@ -97,10 +149,9 @@ exact dash, a per-slot dash text playground, and shareable logs — which is how
 
 ---
 
-## Coming in the next build
+## Also new since v0.3.0-beta
 
-Built and running, **not yet in the download above**. Field-testing on a bike is what stands between
-these and a release.
+Shipped in the R64–R76 builds. These have had less time on a bike than the list above.
 
 **Ride replay.** Press play and the ride runs itself at 30×: a heading-oriented marker glides along the
 route with the camera following, the trail behind it at full strength and the road ahead dimmed, and
@@ -146,6 +197,8 @@ remote can reach, and Settings split into eight labelled groups.
 - Two optional exceptions, both your choice: live weather for the dash idle screen (Open-Meteo, no key,
   sends only a coarse location), and notification summaries if you add your own Gemini API key — off by
   default.
+- The Rider Intercom sends your voice only to the one phone you connect it to, directly over Bluetooth.
+  It never touches the internet and nothing is recorded.
 
 ---
 
@@ -180,7 +233,8 @@ remote can reach, and Settings split into eight labelled groups.
    everything still works via the built-in route sketch.
 7. Full vehicle telemetry (RPM, gear, coolant, fuel, TPMS) exists in the protocol but the dash rejects
    the writes. It is **not** available — help welcome.
-8. This is a beta. If something crashes or misbehaves, please open an issue or share your logs from
+8. The Rider Intercom is new and not yet road-tested; see its section above.
+9. This is a beta. If something crashes or misbehaves, please open an issue or share your logs from
    Settings → Diagnostics, and include your bike model and firmware if you can.
 
 ---
@@ -189,7 +243,12 @@ remote can reach, and Settings split into eight labelled groups.
 
 Grab the APK from the [latest release](../../releases/latest), copy it to your phone and open it (you'll
 need to allow "install from unknown sources"). First-ever pairing needs the physical "add device"
-confirmation on the bike's dash.
+confirmation on the bike's dash. Your pillion installs `RiderIntercom-companion.apk` from the same release
+(see [Rider Intercom](#rider-intercom--talk-to-your-pillion-new-in-r76)).
+
+If Android says **"App blocked to protect your device"**, that's Play Protect, which blocks sideloaded apps
+that read notifications. In the Play Store open your profile → **Play Protect** → gear icon, turn off
+**Scan apps with Play Protect**, install, then turn it back on.
 
 ## Build it yourself
 

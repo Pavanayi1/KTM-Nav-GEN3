@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <style name="Theme.RiderIntercom" parent="android:Theme.Material.NoActionBar">
+        <item name="android:statusBarColor">#FF0C1116</item>
+        <item name="android:navigationBarColor">#FF0C1116</item>
+        <item name="android:windowBackground">#FF0C1116</item>
+    </style>
+</resources>

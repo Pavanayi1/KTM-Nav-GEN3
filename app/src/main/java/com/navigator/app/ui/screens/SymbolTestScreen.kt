@@ -38,11 +38,12 @@ import com.navigator.app.logging.AppLogger
 import com.navigator.app.settings.AppSettings
 import com.navigator.app.ui.components.Eyebrow
 import com.navigator.app.ui.components.TurnIconRef
+import com.navigator.app.ui.components.ScreenHeader
 import com.navigator.app.ui.theme.Barlow
 import com.navigator.app.ui.theme.BarlowCondensed
 import com.navigator.app.ui.theme.JetBrainsMono
 import com.navigator.app.ui.theme.Ktm
-import com.navigator.app.ui.theme.OpenDashIcons
+import com.navigator.app.ui.theme.NavIcons
 
 /**
  * Manual hardware-calibration screen (restyled to the KTM theme): send every
@@ -57,19 +58,7 @@ fun SymbolTestScreen(onBack: () -> Unit) {
     Column(
         modifier = Modifier.fillMaxSize().background(Ktm.Screen).systemBarsPadding(),
     ) {
-        Row(
-            modifier = Modifier.fillMaxWidth().padding(start = 8.dp, end = 16.dp, top = 8.dp, bottom = 4.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Icon(
-                OpenDashIcons.ChevronLeft, contentDescription = "Back", tint = Ktm.TextSecondary,
-                modifier = Modifier.clip(CircleShape).clickable(onClick = onBack).padding(8.dp).size(22.dp),
-            )
-            Text(
-                "SYMBOL TESTING", color = Ktm.White, fontFamily = BarlowCondensed, fontWeight = FontWeight.Bold,
-                fontStyle = FontStyle.Italic, fontSize = 24.sp, modifier = Modifier.padding(start = 4.dp),
-            )
-        }
+        ScreenHeader("Symbol testing", onBack = onBack)
 
         LazyColumn(
             modifier = Modifier.fillMaxSize().padding(horizontal = 16.dp),

@@ -1,19 +1,19 @@
 #!/usr/bin/env python3
 """
-Train an INDEPENDENT maneuver-icon classifier for OpenDash.
+Train an INDEPENDENT maneuver-icon classifier for Navigator.
 
 Input:  ml/dataset/*.png  — Google Maps' own labeled maneuver icons, rendered
-        white-on-transparent by OpenDash's debug exporter (MapsIconExporter).
+        white-on-transparent by Navigator's debug exporter (MapsIconExporter).
         Each filename IS its label, e.g. maneuver_turn_sharp_left.png.
 Output: maneuver_model.tflite  + maneuver_labels.txt
-        Drop both into app/src/main/res/raw/ ; OpenDash loads them at runtime.
+        Drop both into app/src/main/res/raw/ ; Navigator loads them at runtime.
 
-The model matches OpenDash's on-device preprocessing exactly:
+The model matches Navigator's on-device preprocessing exactly:
   composite on black -> 96x96 -> RGB float [0,1] -> CNN -> softmax over classes.
 Each output class is a KTM dash TurnIcon *binary code* (as a string), so the app
 maps a prediction straight through TurnIcon.fromBinary(). This is a clean-room
 replacement for the proprietary model — trained only on Google's public,
-self-labeled drawable set, so OpenDash can ship free forever.
+self-labeled drawable set, so Navigator can ship free forever.
 
 Run locally (pip install "tensorflow>=2.14" pillow numpy) or on Google Colab
 (free GPU): upload the ml/ folder, then `python train_maneuver_model.py`.

@@ -43,11 +43,12 @@ import com.navigator.app.settings.AppSettings
 import com.navigator.app.ui.components.Eyebrow
 import com.navigator.app.ui.components.KtmOutlineButton
 import com.navigator.app.ui.components.KtmPrimaryButton
+import com.navigator.app.ui.components.ScreenHeader
 import com.navigator.app.ui.theme.Barlow
 import com.navigator.app.ui.theme.BarlowCondensed
 import com.navigator.app.ui.theme.JetBrainsMono
 import com.navigator.app.ui.theme.Ktm
-import com.navigator.app.ui.theme.OpenDashIcons
+import com.navigator.app.ui.theme.NavIcons
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
@@ -135,19 +136,7 @@ fun VibrationCalibrationScreen(onBack: () -> Unit) {
             .padding(top = 12.dp, bottom = 18.dp),
     ) {
         // Header: back chevron + title (matches the other sub-screens).
-        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
-            Icon(
-                OpenDashIcons.ChevronLeft, contentDescription = "Back", tint = Ktm.Muted,
-                modifier = Modifier
-                    .clip(CircleShape)
-                    .clickable(onClick = onBack)
-                    .padding(6.dp)
-                    .size(24.dp),
-            )
-            Text("ENGINE CALIBRATION", color = Ktm.White, fontFamily = BarlowCondensed,
-                fontWeight = FontWeight.Bold, fontStyle = FontStyle.Italic, fontSize = 20.sp,
-                modifier = Modifier.padding(start = 8.dp))
-        }
+        ScreenHeader("Engine calibration", onBack = onBack)
         Spacer(Modifier.height(24.dp))
 
         Column(modifier = Modifier.weight(1f).verticalScroll(rememberScrollState())) {

@@ -1,4 +1,4 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="gamepad_accessibility_description">Lets your KTM handlebar remote act as a gamepad for the whole phone: while another app is open, Up/Down move the selection, Set taps it, and Back goes back. OpenDash only uses this to turn handlebar button presses into on-screen navigation — it does not read or collect your screen content.</string>
+    <string name="gamepad_accessibility_description">Lets your KTM handlebar remote act as a gamepad for the whole phone: while another app is open, Up/Down move the selection, Set taps it, and Back goes back. Navigator only uses this to turn handlebar button presses into on-screen navigation — it does not read or collect your screen content.</string>
 </resources>

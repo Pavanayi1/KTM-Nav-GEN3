@@ -84,7 +84,7 @@ data class BrandTheme(
     val danger: Color,
 )
 
-/** KTM — dark, "READY TO RACE". Values are the original OpenDash KTM handoff, 1:1. */
+/** KTM — dark, "READY TO RACE". Values are the original Navigator KTM handoff, 1:1. */
 val KtmTheme = BrandTheme(
     brand = Brand.KTM,
     isDark = true,

@@ -61,13 +61,14 @@ import androidx.compose.ui.unit.sp
 import com.navigator.app.BuildConfig
 import com.navigator.app.ble.BccuConnectionService
 import com.navigator.app.settings.AppSettings
-import com.navigator.app.ui.OpenDashPermissions
+import com.navigator.app.ui.NavigatorPermissions
+import com.navigator.app.ui.components.Eyebrow
 import com.navigator.app.ui.components.KtmPrimaryButton
 import com.navigator.app.ui.theme.Barlow
 import com.navigator.app.ui.theme.BarlowCondensed
 import com.navigator.app.ui.theme.JetBrainsMono
 import com.navigator.app.ui.theme.Ktm
-import com.navigator.app.ui.theme.OpenDashIcons
+import com.navigator.app.ui.theme.NavIcons
 
 private data class FoundDevice(val device: BluetoothDevice, val rssi: Int)
 
@@ -101,10 +102,10 @@ fun PairingScreen(settings: AppSettings, onPaired: () -> Unit, onOpenLogs: () ->
     // Whether we may scan; without this the scanner call throws a
     // SecurityException and crashed the app on launch. Re-checked after the
     // permission request returns.
-    var btGranted by remember { mutableStateOf(OpenDashPermissions.bluetoothGranted(context)) }
+    var btGranted by remember { mutableStateOf(NavigatorPermissions.bluetoothGranted(context)) }
     val permLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions()
-    ) { btGranted = OpenDashPermissions.bluetoothGranted(context) }
+    ) { btGranted = NavigatorPermissions.bluetoothGranted(context) }
 
     val scanCallback = remember {
         object : ScanCallback() {
@@ -119,7 +120,7 @@ fun PairingScreen(settings: AppSettings, onPaired: () -> Unit, onOpenLogs: () ->
     fun startScan() {
         // Guarded so a missing permission or disabled Bluetooth degrades to a
         // prompt instead of throwing a SecurityException / NPE.
-        if (!OpenDashPermissions.bluetoothGranted(context)) {
+        if (!NavigatorPermissions.bluetoothGranted(context)) {
             btGranted = false
             return
         }
@@ -164,53 +165,33 @@ fun PairingScreen(settings: AppSettings, onPaired: () -> Unit, onOpenLogs: () ->
             .systemBarsPadding()
             .padding(horizontal = 22.dp)
             .padding(top = 8.dp, bottom = 18.dp),
-        horizontalAlignment = Alignment.CenterHorizontally,
     ) {
-        // Top-right Logs affordance (kept from the original for troubleshooting).
-        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
-            Text(
-                "LOGS",
-                color = Ktm.Dim,
-                fontFamily = BarlowCondensed,
-                fontWeight = FontWeight.Bold,
-                fontSize = 12.sp,
-                letterSpacing = 1.5.sp,
-                modifier = Modifier
-                    .clip(RoundedCornerShape(7.dp))
-                    .clickable(onClick = onOpenLogs)
-                    .padding(horizontal = 8.dp, vertical = 4.dp),
-            )
-        }
-
-        Spacer(Modifier.height(8.dp))
-        PulseScanTarget()
-
-        Spacer(Modifier.height(30.dp))
-        val title = when {
-            !btGranted -> "Bluetooth needed"
-            connecting -> "Connecting to bike"
-            else -> "Scanning for bike"
-        }
+        Spacer(Modifier.height(10.dp))
         Text(
-            title,
+            if (!btGranted) "BLUETOOTH NEEDED" else "PAIR YOUR DASH",
             color = Ktm.White,
             fontFamily = BarlowCondensed,
             fontWeight = FontWeight.Bold,
-            fontSize = 26.sp,
-            letterSpacing = 0.3.sp,
+            fontStyle = FontStyle.Italic,
+            fontSize = 30.sp,
+            letterSpacing = (-0.3).sp,
         )
         Text(
             if (!btGranted)
-                "Navigator Gen3 needs the Nearby devices\npermission to find your bike's dash."
+                "Navigator Gen3 needs the Nearby devices permission to find your bike's dash."
             else
-                "Turn the ignition on and keep\nyour phone near the dash.",
-            color = Ktm.Muted2,
+                "Put the dash into add device mode from its connectivity menu, then confirm on the dash when asked.",
+            color = Ktm.Muted,
             fontFamily = Barlow,
             fontSize = 14.sp,
             lineHeight = 20.sp,
-            textAlign = TextAlign.Center,
-            modifier = Modifier.padding(top = 4.dp),
+            modifier = Modifier.padding(top = 6.dp),
         )
+
+        Spacer(Modifier.height(18.dp))
+        if (btGranted) {
+            ScanStatusBar(scanning = scanning, connecting = connecting, found = foundDevices.size)
+        }
 
         Spacer(Modifier.height(24.dp))
         if (!btGranted) {
@@ -220,24 +201,64 @@ fun PairingScreen(settings: AppSettings, onPaired: () -> Unit, onOpenLogs: () ->
                 contentAlignment = Alignment.Center,
             ) {
                 KtmPrimaryButton("Grant permission") {
-                    permLauncher.launch(OpenDashPermissions.runtimePermissions())
+                    permLauncher.launch(NavigatorPermissions.runtimePermissions())
                 }
             }
         } else {
-            // KTM-named devices float to the top and are highlighted in orange.
-            val sortedDevices = foundDevices.sortedByDescending { it.device.name?.contains("KTM", ignoreCase = true) == true }
+            // Two sections, as the design splits them: the bike we already know
+            // (bonded, or advertising a brand name) above everything else, so
+            // the rider isn't hunting for it among neighbours' devices.
+            val bonded = settings.bondedDeviceAddress
+            val (mine, nearby) = foundDevices.partition { found ->
+                found.device.address.equals(bonded, ignoreCase = true) ||
+                    found.device.name?.contains("KTM", ignoreCase = true) == true ||
+                    found.device.name?.contains("HQV", ignoreCase = true) == true ||
+                    found.device.name?.contains("Husqvarna", ignoreCase = true) == true
+            }
             LazyColumn(
                 modifier = Modifier.weight(1f).fillMaxWidth(),
-                verticalArrangement = Arrangement.spacedBy(12.dp),
+                verticalArrangement = Arrangement.spacedBy(10.dp),
             ) {
-                items(sortedDevices) { found ->
-                    val isKtm = found.device.name?.contains("KTM", ignoreCase = true) == true
+                if (mine.isNotEmpty()) {
+                    item {
+                        Eyebrow("Your bike", color = Ktm.Dim, fontSize = 11, letterSpacing = 2.4,
+                            modifier = Modifier.padding(top = 6.dp))
+                    }
+                }
+                items(mine) { found ->
                     DeviceCard(
                         name = found.device.name ?: "Unknown device",
                         address = found.device.address,
+                        rssi = found.rssi,
+                        bonded = found.device.address.equals(bonded, ignoreCase = true),
+                        selected = connectingAddress == found.device.address,
+                        dimmed = false,
+                        isKtm = true,
+                        onClick = {
+                            if (connectingAddress == null) {
+                                settings.bondedDeviceAddress = found.device.address
+                                settings.bondedDeviceName = found.device.name
+                                connectingAddress = found.device.address
+                                BccuConnectionService.start(context, found.device.address)
+                            }
+                        },
+                    )
+                }
+                if (nearby.isNotEmpty()) {
+                    item {
+                        Eyebrow("Nearby", color = Ktm.Dim, fontSize = 11, letterSpacing = 2.4,
+                            modifier = Modifier.padding(top = 14.dp))
+                    }
+                }
+                items(nearby) { found ->
+                    DeviceCard(
+                        name = found.device.name ?: "Unknown device",
+                        address = found.device.address,
+                        rssi = found.rssi,
+                        bonded = false,
                         selected = connectingAddress == found.device.address,
                         dimmed = found.device.name == null && connectingAddress != found.device.address,
-                        isKtm = isKtm,
+                        isKtm = false,
                         onClick = {
                             if (connectingAddress == null) {
                                 settings.bondedDeviceAddress = found.device.address
@@ -263,7 +284,21 @@ fun PairingScreen(settings: AppSettings, onPaired: () -> Unit, onOpenLogs: () ->
             }
         }
 
-        Spacer(Modifier.height(12.dp))
+        // Footer: the one thing a stuck rider needs is the log, so it sits
+        // right above the retry rather than in Settings.
+        if (btGranted && !connecting) {
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(bottom = 10.dp),
+                horizontalArrangement = Arrangement.Center,
+            ) {
+                Text("Trouble pairing?  ", color = Ktm.Dim, fontFamily = Barlow, fontSize = 13.sp)
+                Text(
+                    "Open logs", color = Ktm.Orange, fontFamily = Barlow, fontWeight = FontWeight.SemiBold,
+                    fontSize = 13.sp,
+                    modifier = Modifier.clip(RoundedCornerShape(6.dp)).clickable(onClick = onOpenLogs),
+                )
+            }
+        }
         if (connecting) {
             AuthenticatingButton()
             Text(
@@ -340,7 +375,7 @@ private fun PulseScanTarget() {
                 .border(1.dp, Ktm.Bezel, CircleShape),
             contentAlignment = Alignment.Center,
         ) {
-            Icon(OpenDashIcons.Bike, contentDescription = null, tint = Ktm.Orange, modifier = Modifier.size(46.dp))
+            Icon(NavIcons.Bike, contentDescription = null, tint = Ktm.Orange, modifier = Modifier.size(46.dp))
         }
     }
 }
@@ -349,6 +384,8 @@ private fun PulseScanTarget() {
 private fun DeviceCard(
     name: String,
     address: String,
+    rssi: Int?,
+    bonded: Boolean,
     selected: Boolean,
     dimmed: Boolean,
     isKtm: Boolean,
@@ -359,59 +396,113 @@ private fun DeviceCard(
         modifier = Modifier
             .fillMaxWidth()
             .graphicsLayer { alpha = if (dimmed) 0.5f else 1f }
-            .clip(RoundedCornerShape(14.dp))
-            .background(if (highlighted) Ktm.Surface else Ktm.SurfaceDisabled)
-            .border(1.dp, if (highlighted) Ktm.Orange else Ktm.Border, RoundedCornerShape(14.dp))
+            .clip(RoundedCornerShape(Ktm.RadiusRow))
+            .background(Ktm.Surface)
+            .border(1.dp, if (highlighted) Ktm.Orange else Ktm.Border, RoundedCornerShape(Ktm.RadiusRow))
             .clickable(onClick = onClick)
             .padding(horizontal = 16.dp, vertical = 15.dp),
     ) {
-        if (selected) {
-            Box(
-                modifier = Modifier
-                    .align(Alignment.TopCenter)
-                    .fillMaxWidth()
-                    .height(2.dp)
-                    .background(Brush.horizontalGradient(listOf(Color.Transparent, Ktm.Orange, Color.Transparent))),
-            )
-        }
         Row(
             modifier = Modifier.fillMaxWidth(),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.SpaceBetween,
         ) {
-            Column {
+            Column(modifier = Modifier.weight(1f).padding(end = 12.dp)) {
                 Text(
                     name,
-                    color = if (highlighted) Ktm.White else Ktm.TextSecondary,
-                    fontFamily = BarlowCondensed,
-                    fontWeight = FontWeight.Bold,
-                    fontSize = 19.sp,
-                    letterSpacing = 0.5.sp,
+                    color = if (highlighted) Ktm.White else Ktm.TextPrimary,
+                    fontFamily = Barlow,
+                    fontWeight = FontWeight.SemiBold,
+                    fontSize = 17.sp,
+                    maxLines = 1,
+                    overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
                 )
                 Text(
-                    address,
-                    color = Ktm.Dim,
+                    // "bonded" beats a signal number: it tells the rider this is
+                    // the one their phone already knows.
+                    address + if (bonded) " · bonded" else rssi?.let { " · $it dBm" } ?: "",
+                    color = if (highlighted) Ktm.Muted else Ktm.Dim,
                     fontFamily = JetBrainsMono,
-                    fontSize = 11.sp,
+                    fontSize = 12.sp,
                     modifier = Modifier.padding(top = 1.dp),
                 )
             }
-            SignalMeter()
+            SignalMeter(rssi, highlighted)
         }
     }
 }
 
+/**
+ * Scan status strip: a pulsing accent dot while the radio is actually
+ * scanning, and a live count. Without the count, "scanning" and "scanning but
+ * finding nothing" look identical.
+ */
 @Composable
-private fun SignalMeter() {
-    val heights = listOf(6, 10, 14, 18)
+private fun ScanStatusBar(scanning: Boolean, connecting: Boolean, found: Int) {
+    val label = when {
+        connecting -> "CONNECTING"
+        scanning -> "SCANNING"
+        else -> "IDLE"
+    }
+    val dotColor = if (scanning || connecting) Ktm.Orange else Ktm.Dim3
+    val alpha = if (scanning || connecting) {
+        val transition = rememberInfiniteTransition(label = "scanPulse")
+        val a by transition.animateFloat(
+            0.35f, 1f,
+            infiniteRepeatable(tween(700, easing = FastOutSlowInEasing), RepeatMode.Reverse),
+            label = "scanAlpha",
+        )
+        a
+    } else 1f
+
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(Ktm.RadiusRow))
+            .background(Ktm.SurfaceAlt)
+            .border(1.dp, Ktm.RowDivider, RoundedCornerShape(Ktm.RadiusRow))
+            .padding(horizontal = 16.dp, vertical = 13.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.SpaceBetween,
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Box(
+                modifier = Modifier
+                    .size(9.dp)
+                    .graphicsLayer { this.alpha = alpha }
+                    .clip(CircleShape)
+                    .background(dotColor),
+            )
+            Text(
+                label, color = Ktm.TextPrimary, fontFamily = BarlowCondensed, fontWeight = FontWeight.Bold,
+                fontSize = 12.sp, letterSpacing = 2.2.sp, modifier = Modifier.padding(start = 10.dp),
+            )
+        }
+        Text(
+            if (found == 1) "1 found" else "$found found",
+            color = Ktm.Dim, fontFamily = JetBrainsMono, fontSize = 12.sp,
+        )
+    }
+}
+
+@Composable
+private fun SignalMeter(rssi: Int?, highlighted: Boolean) {
+    val lit = when {
+        rssi == null -> 0
+        rssi >= -60 -> 4
+        rssi >= -72 -> 3
+        rssi >= -85 -> 2
+        else -> 1
+    }
+    val onColor = if (highlighted) Ktm.Green else Ktm.Muted
     Row(verticalAlignment = Alignment.Bottom, horizontalArrangement = Arrangement.spacedBy(2.dp)) {
-        heights.forEach { h ->
+        listOf(6, 10, 14, 18).forEachIndexed { index, h ->
             Box(
                 modifier = Modifier
                     .width(3.dp)
                     .height(h.dp)
                     .clip(RoundedCornerShape(1.dp))
-                    .background(Ktm.Green),
+                    .background(if (index < lit) onColor else Ktm.Bezel),
             )
         }
     }

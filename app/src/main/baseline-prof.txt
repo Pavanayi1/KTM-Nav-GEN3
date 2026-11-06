@@ -1,0 +1,5 @@
+# Precompile the whole app at install time (baseline profile wildcard rules).
+# The Compose libraries ship their own profiles; this covers our screens,
+# BLE service and notification path so first runs aren't interpreted.
+HSPLcom/navigator/app/**->**(**)**
+Lcom/navigator/app/**;

@@ -43,9 +43,72 @@ class GeminiSummarizer(
         }
     }
 
+    /**
+     * Ask Google which models this key can actually use, newest-looking first.
+     * This is the durable answer to "Gemini retired the model my app hardcodes":
+     * verified against the live API on 2026-09-11, every 1.5 and 2.0 model the
+     * app used to list is gone, and generateContent answers 404 with
+     * "This model is no longer available" for them. Filtered to text
+     * generateContent models - the same endpoint also lists TTS, image, audio
+     * and robotics models that would just fail here.
+     */
+    suspend fun listModels(): Result<List<String>> = withContext(Dispatchers.IO) {
+        runCatching {
+            val url = URL("https://generativelanguage.googleapis.com/v1beta/models?key=$apiKey&pageSize=200")
+            val connection = (url.openConnection() as HttpURLConnection).apply {
+                requestMethod = "GET"
+                connectTimeout = 10_000
+                readTimeout = 15_000
+            }
+            val code = connection.responseCode
+            val stream = if (code in 200..299) connection.inputStream else connection.errorStream
+            val body = stream.bufferedReader().use { it.readText() }
+            if (code !in 200..299) throw RuntimeException("Gemini API error $code: $body")
+            val models = JSONObject(body).optJSONArray("models") ?: JSONArray()
+            val out = mutableListOf<String>()
+            for (i in 0 until models.length()) {
+                val m = models.getJSONObject(i)
+                val methods = m.optJSONArray("supportedGenerationMethods") ?: continue
+                var generates = false
+                for (j in 0 until methods.length()) {
+                    if (methods.getString(j) == "generateContent") { generates = true; break }
+                }
+                if (!generates) continue
+                val name = m.getString("name").removePrefix("models/")
+                if (NON_TEXT_MODEL_MARKERS.any { name.contains(it) }) continue
+                out += name
+            }
+            AppLogger.log("Gemini", "Fetched ${out.size} usable models from the API")
+            out
+        }.onFailure { AppLogger.log("Gemini", "!! Model list fetch failed: ${it.message}") }
+    }
+
+    /**
+     * One tiny round-trip to prove the key AND the model name actually work.
+     * Unlike [summarize], this does NOT swallow failures into a fallback - the
+     * whole point is to surface the API's own error, which is what tells the
+     * rider which half is wrong: a bad key comes back 400/403, a model name
+     * that doesn't exist (or was retired) comes back 404.
+     */
+    suspend fun testConnection(): Result<String> = withContext(Dispatchers.IO) {
+        runCatching {
+            val reply = callGemini("Reply with exactly: OK").trim()
+            AppLogger.log("Gemini", "Test call to \"$model\" succeeded: \"$reply\"")
+            reply
+        }.onFailure { AppLogger.log("Gemini", "!! Test call to \"$model\" failed: ${it.message}") }
+    }
+
     private fun fallbackSummary(entry: NotificationEntry): String {
         val combined = if (entry.title.isNotBlank()) "${entry.title}: ${entry.text}" else entry.text
         return if (combined.length > 60) combined.take(57) + "..." else combined
+    }
+
+    private companion object {
+        /** Substrings that mark a listed model as not a plain text generator. */
+        val NON_TEXT_MODEL_MARKERS = listOf(
+            "tts", "image", "banana", "lyria", "robotics", "transcribe",
+            "computer-use", "embedding", "veo", "imagen",
+        )
     }
 
     private fun callGemini(prompt: String): String {

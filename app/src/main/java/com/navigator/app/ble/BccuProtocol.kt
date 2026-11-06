@@ -26,6 +26,9 @@ object BccuProtocol {
     val NOTIFICATION: UUID = uuid("070a")
     val TBT_NAV_REQUEST: UUID = uuid("070b")
     val TBT_NAV_RESPONSE: UUID = uuid("070c")
+    val LAST_DESTINATION: UUID = uuid("070d")
+    val FAVORITE: UUID = uuid("070e")
+    val ACTIVE_WAYPOINT: UUID = uuid("0711")
 
     val BASE_SERVICE: UUID = uuid("0000")
     val BASE_GET_VIN_REQUEST: UUID = uuid("0001")
@@ -207,6 +210,19 @@ object BccuProtocol {
         else -> text.substring(0, maxLen - 3) + "..."
     }
 
+    /**
+     * How many characters each center text slot holds, confirmed from the
+     * official app's own label classes (TurnDistance/TurnInfo/TurnRoad/Eta/
+     * Dist2Target). Public because the service scrolls text that overflows a
+     * slot rather than letting [elipse] cut it to "Head tow..." - the window it
+     * slides has to be exactly this wide.
+     */
+    const val TURN_DISTANCE_MAX = 8
+    const val TURN_INFO_MAX = 16
+    const val TURN_ROAD_MAX = 32
+    const val ETA_MAX = 8
+    const val REMAINING_DISTANCE_MAX = 8
+
     /** Shared [visibility][UTF-8 text] shape used by TURN_DISTANCE/TURN_INFO/TURN_ROAD/ETA/REMAINING_DISTANCE. */
     private fun buildLabelPayload(text: String, maxLen: Int, visibility: Visibility): ByteArray {
         val textBytes = elipse(text, maxLen).toByteArray(Charsets.UTF_8)
@@ -219,30 +235,146 @@ object BccuProtocol {
      * (max 8 chars) - the official app builds the text as "$turnDist $turnDistUnit".
      */
     fun buildTurnDistancePayload(text: String, visibility: Visibility = Visibility.FULL) =
-        buildLabelPayload(text, 8, visibility)
+        buildLabelPayload(text, TURN_DISTANCE_MAX, visibility)
 
     /**
      * TURN_INFO (0706): secondary maneuver text (Sygic's GuidanceManeuver.turnInfo).
      * Confirmed from TurnInfo.java (max 16 chars).
      */
     fun buildTurnInfoPayload(text: String, visibility: Visibility = Visibility.FULL) =
-        buildLabelPayload(text, 16, visibility)
+        buildLabelPayload(text, TURN_INFO_MAX, visibility)
 
     /**
      * TURN_ROAD (0707): street/road name shown in the dash's center guidance
      * view, e.g. "towards 1st Cross Rd". Confirmed from TurnRoad.java (max 32 chars).
      */
     fun buildTurnRoadPayload(text: String, visibility: Visibility = Visibility.FULL) =
-        buildLabelPayload(text, 32, visibility)
+        buildLabelPayload(text, TURN_ROAD_MAX, visibility)
 
     /** ETA (0708): arrival time label, e.g. "12:45". Confirmed from Eta.java (max 8 chars). */
     fun buildEtaPayload(text: String, visibility: Visibility = Visibility.FULL) =
-        buildLabelPayload(text, 8, visibility)
+        buildLabelPayload(text, ETA_MAX, visibility)
 
     /**
      * REMAINING_DISTANCE (0709): total remaining trip distance, e.g. "123 km".
      * Confirmed from Dist2Target.java (max 8 chars).
      */
     fun buildRemainingDistancePayload(text: String, visibility: Visibility = Visibility.FULL) =
-        buildLabelPayload(text, 8, visibility)
+        buildLabelPayload(text, REMAINING_DISTANCE_MAX, visibility)
+
+    // ---------------------------------------------------------------------
+    // Dash-driven navigation: the cluster's own Favourites menu
+    // ---------------------------------------------------------------------
+    //
+    // The dash browses destinations itself. It asks on TBT_NAV_REQUEST (070b,
+    // bike -> phone notify), the phone answers on FAVORITE (070e) /
+    // LAST_DESTINATION (070d), and when the rider presses SET on an entry the
+    // dash sends START_NAVIGATION carrying that entry's id back.
+    //
+    // Everything below is transcribed from the official app's own serialisers
+    // in com.ktm.mob.services.etbt.impl.ble.characteristics.payloads - not
+    // inferred from traffic. Sources are named per declaration.
+
+    /**
+     * Requests the dash sends on 070b. Byte values from `RequestType.java`.
+     * VOLUME_UNMUTE is 0x80, which is -128 as a signed Java byte - it is a
+     * plain unsigned 0x80 on the wire.
+     */
+    enum class NavRequestType(val binary: Int) {
+        START_NAVIGATION(1),
+        STOP_NAVIGATION(2),
+        SKIP_ACTIVE_WAYPOINT(4),
+        GET_LAST_DESTINATIONS(5),
+        GET_FAVORITES(6),
+        GET_POI_CATEGORIES(7),
+        GET_POIS_BY_CATEGORY(8),
+        GET_ACTIVE_WAYPOINT(10),
+        VOLUME_UP(16),
+        VOLUME_DOWN(32),
+        VOLUME_MUTE(64),
+        VOLUME_UNMUTE(128);
+
+        companion object {
+            fun fromBinary(b: Int): NavRequestType? = entries.firstOrNull { it.binary == b }
+        }
+    }
+
+    /**
+     * A decoded 070b request. [argument] is the request's single trailing byte
+     * where it has one - the waypoint id for START_NAVIGATION
+     * (`StartNavigationRequest.java`), the category for GET_POIS_BY_CATEGORY -
+     * and null for the no-argument requests.
+     */
+    data class NavRequest(val type: NavRequestType, val argument: Int?)
+
+    /** Decode a 070b frame, or null if it isn't a request shape we know. */
+    fun parseNavRequest(data: ByteArray): NavRequest? {
+        if (data.isEmpty()) return null
+        val type = NavRequestType.fromBinary(data[0].toInt() and 0xFF) ?: return null
+        val arg = if (data.size >= 2) data[1].toInt() and 0xFF else null
+        return NavRequest(type, arg)
+    }
+
+    /** HTTP-style response codes, from `ResponseBase.java` (valid range 100..599). */
+    object NavResponseCode {
+        const val TRYING = 100
+        const val OK = 200
+        const val NOT_FOUND = 404
+        const val SERVER_ERROR = 500
+    }
+
+    /**
+     * `LengthString.serialize()`: one length byte then UTF-8 bytes, or a lone
+     * 0xFF for null. The length byte counts BYTES, not characters, and the
+     * official app truncates to [maxLen] characters first.
+     */
+    private fun lengthString(text: String?, maxLen: Int): ByteArray {
+        if (text == null) return byteArrayOf(0xFF.toByte())
+        val bytes = elipse(text, maxLen).toByteArray(Charsets.UTF_8)
+        return byteArrayOf((bytes.size and 0xFF).toByte()) + bytes
+    }
+
+    /** `UInt16.serialize()` - big-endian, high byte first. */
+    private fun uint16(value: Int): ByteArray =
+        byteArrayOf(((value shr 8) and 0xFF).toByte(), (value and 0xFF).toByte())
+
+    /**
+     * One entry of a dash list, as `FavoriteResponse` -> `WaypointItem` ->
+     * `ListItem` -> `ResponseBase` serialise it, in that order:
+     *
+     *     UInt16       responseCode     100 trying / 200 ok / 4xx / 5xx
+     *     LengthString responsePhrase   max 32
+     *     UInt8        nrListItems      total entries in this list
+     *     UInt8        itemId           this entry's index
+     *     LengthString title            max 32  ("Home")
+     *     LengthString description      max 32  (the address)
+     *
+     * [itemId] is what comes back in a START_NAVIGATION request, so it is the
+     * handle the dash uses to name a destination - keep it stable per entry.
+     */
+    fun buildWaypointItemPayload(
+        responseCode: Int,
+        responsePhrase: String?,
+        nrListItems: Int,
+        itemId: Int,
+        title: String?,
+        description: String?,
+    ): ByteArray =
+        uint16(responseCode) +
+            lengthString(responsePhrase, WAYPOINT_PHRASE_MAX) +
+            byteArrayOf((nrListItems and 0xFF).toByte(), (itemId and 0xFF).toByte()) +
+            lengthString(title, WAYPOINT_TITLE_MAX) +
+            lengthString(description, WAYPOINT_TITLE_MAX)
+
+    /**
+     * An empty list: the official app still answers, with a success code and a
+     * zero count, so the dash shows "no entries" instead of hanging on the
+     * request. Title/description are null (the 0xFF form).
+     */
+    fun buildEmptyListPayload(responseCode: Int = NavResponseCode.OK, phrase: String? = "OK"): ByteArray =
+        buildWaypointItemPayload(responseCode, phrase, 0, 0, null, null)
+
+    /** `ResponseBase.MAX_PHRASE_LENGTH` / `WaypointItem.MAX_TITLE_LENGTH`. */
+    const val WAYPOINT_PHRASE_MAX = 32
+    const val WAYPOINT_TITLE_MAX = 32
 }

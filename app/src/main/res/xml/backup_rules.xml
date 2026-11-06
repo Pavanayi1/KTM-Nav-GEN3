@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Android <=11 (API 30 and below) backup scope. We back up ONLY the plain
+  pairing store, which holds the BCCU 16-key pool, bonded bike address/name and
+  gesture/mode prefs - so a reinstall or new phone doesn't force a re-pair.
+  Everything else (esp. the encrypted "navigator_settings" store with the Gemini
+  API key) is deliberately NOT backed up.
+-->
+<full-backup-content>
+    <include domain="sharedpref" path="navigator_pairing.xml" />
+</full-backup-content>

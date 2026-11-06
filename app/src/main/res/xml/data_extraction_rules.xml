@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Android 12+ (API 31+) backup scope. Same intent as backup_rules.xml: only the
+  plain pairing store (BCCU key pool + bonded bike + gesture/mode prefs) is
+  included, for both cloud backup and phone-to-phone transfer, so the rider
+  never has to re-pair after a reinstall or device move. Secrets in the
+  encrypted store are excluded by omission (include-only rules).
+-->
+<data-extraction-rules>
+    <cloud-backup>
+        <include domain="sharedpref" path="navigator_pairing.xml" />
+    </cloud-backup>
+    <device-transfer>
+        <include domain="sharedpref" path="navigator_pairing.xml" />
+    </device-transfer>
+</data-extraction-rules>

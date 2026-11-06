@@ -30,7 +30,7 @@ import java.io.FileOutputStream
 object IconHashCache {
 
     // Confirmed hash -> icon mappings. Empty until real rides confirm some -
-    // check Download/OpenDash/unknown_turn_icons (or the app-private
+    // check Download/Navigator/unknown_turn_icons (or the app-private
     // equivalent) for saved PNGs, cross-reference against what the phone
     // screen showed at that log timestamp, then add entries here.
     private val knownHashes: Map<Int, BccuProtocol.TurnIcon> = mapOf(

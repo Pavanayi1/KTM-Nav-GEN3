@@ -37,15 +37,27 @@
     <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
     <!-- Draw the handlebar mode-picker overlay on top of other apps. -->
     <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
-    <!-- Only needed on API 26-28 to write the public log copy under Downloads/OpenDash; API29+ uses MediaStore instead. -->
+    <!-- Only needed on API 26-28 to write the public log copy under Downloads/Navigator; API29+ uses MediaStore instead. -->
     <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" android:maxSdkVersion="28" />
 
     <application
-        android:name=".OpenDashApplication"
-        android:allowBackup="false"
+        android:name=".NavigatorApplication"
+        android:allowBackup="true"
+        android:fullBackupContent="@xml/backup_rules"
+        android:dataExtractionRules="@xml/data_extraction_rules"
         android:label="Navigator Gen3"
-        android:theme="@style/Theme.OpenDash"
+        android:theme="@style/Theme.Navigator"
         android:icon="@mipmap/ic_launcher">
+        <!-- Lets `simpleperf`/Android Studio sample the release build (shell only,
+             no debugging). Google's recommended setup for measuring real-world
+             UI performance; grants nothing to other apps. -->
+        <profileable android:shell="true" />
+
+        <!-- Google Maps key for Ride Analytics; blank when local.properties has none
+             (the screen then uses its canvas fallback instead of the map). -->
+        <meta-data
+            android:name="com.google.android.geo.API_KEY"
+            android:value="${MAPS_API_KEY}" />
 
         <activity
             android:name=".ui.MainActivity"
@@ -117,7 +129,7 @@
 
         <provider
             android:name="androidx.core.content.FileProvider"
-            android:authorities="com.navigator.app.fileprovider"
+            android:authorities="${applicationId}.fileprovider"
             android:exported="false"
             android:grantUriPermissions="true">
             <meta-data

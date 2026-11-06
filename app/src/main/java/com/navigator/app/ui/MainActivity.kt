@@ -5,6 +5,7 @@ import android.content.Intent
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import androidx.compose.animation.togetherWith
 import android.provider.Settings
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -41,11 +42,34 @@ import com.navigator.app.ui.screens.GridMenuScreen
 import com.navigator.app.ui.screens.NotificationScreen
 import com.navigator.app.ui.screens.PairingScreen
 import com.navigator.app.ui.screens.SettingsScreen
-import com.navigator.app.ui.theme.OpenDashTheme
+import com.navigator.app.ui.theme.NavigatorTheme
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
-private enum class AppRoute { BRAND, ONBOARDING, PAIRING, MAIN, SETTINGS, LOGS, SYMBOL_TEST, TURN_CALIBRATION, VIBRATION_CALIBRATION, RIDES }
+/** Navigation depth, for choosing the slide direction between two screens. */
+private fun routeDepth(r: AppRoute): Int = when (r) {
+    AppRoute.BRAND -> 0
+    AppRoute.ONBOARDING -> 1
+    AppRoute.PAIRING -> 2
+    AppRoute.MAIN -> 3
+    AppRoute.SETTINGS, AppRoute.RIDES -> 4
+    else -> 5
+}
+
+private fun routeTransition(from: AppRoute, to: AppRoute): androidx.compose.animation.ContentTransform {
+    val forward = routeDepth(to) >= routeDepth(from)
+    val dir = if (forward) 1 else -1
+    val ease = androidx.compose.animation.core.FastOutSlowInEasing
+    val enter = androidx.compose.animation.slideInHorizontally(
+        androidx.compose.animation.core.tween(320, easing = ease)
+    ) { w -> dir * w / 4 } + androidx.compose.animation.fadeIn(androidx.compose.animation.core.tween(260, delayMillis = 40))
+    val exit = androidx.compose.animation.slideOutHorizontally(
+        androidx.compose.animation.core.tween(320, easing = ease)
+    ) { w -> -dir * w / 8 } + androidx.compose.animation.fadeOut(androidx.compose.animation.core.tween(200))
+    return enter togetherWith exit
+}
+
+private enum class AppRoute { BRAND, ONBOARDING, PAIRING, MAIN, SETTINGS, LOGS, SYMBOL_TEST, TURN_CALIBRATION, VIBRATION_CALIBRATION, RIDES, DEVELOPER, RIDE_ANALYTICS, TRAFFIC_MAP }
 
 class MainActivity : ComponentActivity() {
 
@@ -59,6 +83,9 @@ class MainActivity : ComponentActivity() {
          * scratch to re-read an extra from.
          */
         val importedGpx = kotlinx.coroutines.flow.MutableStateFlow<java.io.File?>(null)
+
+        /** Grid tile / handlebar "Rides" request - the composable owns the route state, so signal it via a flow. */
+        val openRidesRequest = kotlinx.coroutines.flow.MutableStateFlow(false)
     }
 
     private lateinit var settings: AppSettings
@@ -79,6 +106,8 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        // Decode the bike art off the main thread before the first screen needs it.
+        com.navigator.app.ui.components.BikeBitmaps.preload(this)
 
         // Draw edge-to-edge from the very first frame so the layout fills the
         // screen immediately instead of settling once the window insets arrive
@@ -101,6 +130,8 @@ class MainActivity : ComponentActivity() {
         // service up as soon as the app is opened (it's a foreground service and
         // owns its own reconnect loop from there on). The AutoConnectReceiver
         // covers the "app never opened" cases (boot, bike back in range).
+        // Opening the app is the rider un-quitting.
+        settings.userQuit = false
         settings.bondedDeviceAddress?.let { BccuConnectionService.start(this, it) }
 
         var callRingingState = mutableStateOf(false)
@@ -130,6 +161,25 @@ class MainActivity : ComponentActivity() {
                     .addFlags(Intent.FLAG_ACTIVITY_REORDER_TO_FRONT or Intent.FLAG_ACTIVITY_NEW_TASK)
                 startActivity(intent)
             }
+            override fun openIntercom() {
+                // Android 10 is the intercom's own tested floor. Below it, lint
+                // flags a Wi-Fi lock mode (WIFI_MODE_FULL_LOW_LATENCY) that can
+                // throw on 8/9 - so say so instead of opening into a crash.
+                if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) {
+                    android.widget.Toast.makeText(
+                        this@MainActivity, "Intercom needs Android 10 or newer", android.widget.Toast.LENGTH_LONG,
+                    ).show()
+                    return
+                }
+                startActivity(
+                    Intent(this@MainActivity, com.mensa.riderintercom.ui.MainActivity::class.java)
+                        .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                )
+            }
+            override fun openRides() {
+                bringAppToForeground()
+                openRidesRequest.value = true
+            }
             override fun showWatchdogWarning() {
                 // NOTIFICATION_WAYPOINT is confirmed rendering on real hardware;
                 // WARNING is confirmed NOT to render - see AppNotificationListener.kt.
@@ -138,9 +188,14 @@ class MainActivity : ComponentActivity() {
                     BccuProtocol.NotificationIcon.NOTIFICATION_WAYPOINT
                 )
             }
+            override fun showRemoteModePicker() {
+                BccuConnectionService.showModeOverlayIfRunning()
+            }
             override fun exitApp() {
                 // Stop the foreground service (removes its ongoing notification),
                 // cancel any of our notifications, then remove the app task entirely.
+                // Persisted, so nothing restarts the service behind the rider's back.
+                settings.userQuit = true
                 BccuConnectionService.stop(this@MainActivity)
                 (getSystemService(NOTIFICATION_SERVICE) as android.app.NotificationManager).cancelAll()
                 finishAndRemoveTask()
@@ -148,10 +203,25 @@ class MainActivity : ComponentActivity() {
         }
         stateMachine = ControllerStateMachine(actions)
 
-        callStateMonitor = CallStateMonitor(this) { ringing ->
-            callRingingState.value = ringing
-            stateMachine.isCallRinging = ringing
-        }
+        callStateMonitor = CallStateMonitor(
+            this,
+            onRingingChanged = { ringing ->
+                callRingingState.value = ringing
+                stateMachine.isCallRinging = ringing
+            },
+            onCallActive = {
+                // Route AFTER the call settles: the bike's BT SCO grabs the audio
+                // at connect, so an immediate setCommunicationDevice gets stomped
+                // (R40 field report: call went to the bike despite a headset
+                // preference). Retry a few times until the route sticks.
+                lifecycleScope.launch {
+                    for (delayMs in listOf(2000L, 3000L, 4000L)) {
+                        delay(delayMs)
+                        if (callAudioRouter.routeCallToPreferredDevice()) break
+                    }
+                }
+            },
+        )
         if (ContextCompat.checkSelfPermission(this, Manifest.permission.READ_PHONE_STATE) ==
             android.content.pm.PackageManager.PERMISSION_GRANTED
         ) {
@@ -159,7 +229,7 @@ class MainActivity : ComponentActivity() {
         }
 
         // Drive the state machine from RCM button events. EXCEPTION: when the
-        // handlebar-gamepad is enabled AND OpenDash is in the background, the
+        // handlebar-gamepad is enabled AND Navigator is in the background, the
         // buttons belong to the accessibility gamepad (to control other apps) —
         // so we must NOT also feed them to the media/menu state machine, or media
         // would swallow Up/Down/Set and only Back would appear to work.
@@ -201,10 +271,16 @@ class MainActivity : ComponentActivity() {
         // stack: the service can't finish us, so it broadcasts and we do.
         finishReceiver = object : android.content.BroadcastReceiver() {
             override fun onReceive(c: android.content.Context?, i: Intent?) {
+                if (i?.action == BccuConnectionService.ACTION_IDLE_SHUTDOWN) {
+                    AppLogger.log("Idle", "Service idled out with no vehicle - closing the app")
+                }
                 finishAndRemoveTask()
             }
         }.also {
+            // Same handling for both: the notification's Exit action, and the
+            // service shutting itself down after 10 minutes with no bike.
             val filter = android.content.IntentFilter(BccuConnectionService.ACTION_FINISH_ACTIVITY)
+            filter.addAction(BccuConnectionService.ACTION_IDLE_SHUTDOWN)
             if (Build.VERSION.SDK_INT >= 33) {
                 registerReceiver(it, filter, android.content.Context.RECEIVER_NOT_EXPORTED)
             } else {
@@ -215,7 +291,7 @@ class MainActivity : ComponentActivity() {
         importGpxFromIntent(intent)
 
         setContent {
-            OpenDashApp(settings = settings, stateMachine = stateMachine, actions = actions)
+            NavigatorApp(settings = settings, stateMachine = stateMachine, actions = actions)
         }
 
         // DEBUG-only: `adb shell am broadcast -a com.navigator.app.EXPORT_MANEUVERS`
@@ -318,7 +394,7 @@ class MainActivity : ComponentActivity() {
 }
 
 @Composable
-private fun OpenDashApp(
+private fun NavigatorApp(
     settings: AppSettings,
     stateMachine: ControllerStateMachine,
     actions: ControllerStateMachine.Actions
@@ -343,7 +419,18 @@ private fun OpenDashApp(
     LaunchedEffect(importedGpx) {
         if (importedGpx != null && route != AppRoute.ONBOARDING) route = AppRoute.RIDES
     }
+    val openRides by MainActivity.openRidesRequest.collectAsState()
+    LaunchedEffect(openRides) {
+        if (openRides) {
+            MainActivity.openRidesRequest.value = false
+            if (route == AppRoute.MAIN) route = AppRoute.RIDES
+        }
+    }
     var logsReturnRoute by remember { mutableStateOf(AppRoute.SETTINGS) }
+    // Developer screen is reachable from Settings AND from the home header's
+    // DEV pill (dev mode) - back returns to whichever opened it.
+    var devReturnRoute by remember { mutableStateOf(AppRoute.SETTINGS) }
+    var analyticsFile by remember { mutableStateOf<java.io.File?>(null) }
     val context = androidx.compose.ui.platform.LocalContext.current
     // Reactively observe the controller state instead of polling it - Compose
     // now recomposes only when screen/selection actually changes.
@@ -364,9 +451,12 @@ private fun OpenDashApp(
             AppRoute.SETTINGS -> route = AppRoute.MAIN
             AppRoute.LOGS -> route = logsReturnRoute
             AppRoute.SYMBOL_TEST -> route = AppRoute.SETTINGS
+            AppRoute.DEVELOPER -> route = devReturnRoute
             AppRoute.TURN_CALIBRATION -> route = AppRoute.SETTINGS
             AppRoute.VIBRATION_CALIBRATION -> route = AppRoute.SETTINGS
             AppRoute.RIDES -> { MainActivity.importedGpx.value = null; route = AppRoute.MAIN }
+            AppRoute.RIDE_ANALYTICS -> route = AppRoute.RIDES
+            AppRoute.TRAFFIC_MAP -> route = AppRoute.RIDES
             AppRoute.MAIN -> if (!stateMachine.touchBack()) {
                 (context as? ComponentActivity)?.moveTaskToBack(true)
             }
@@ -391,9 +481,18 @@ private fun OpenDashApp(
     }
 
     val highContrast = uiState.screen == ControllerScreen.NOTIFICATIONS
-    OpenDashTheme(highContrast = highContrast) {
+    NavigatorTheme(highContrast = highContrast) {
       androidx.compose.foundation.layout.Box(modifier = androidx.compose.ui.Modifier.fillMaxSize()) {
-        when (route) {
+        // Screen-to-screen motion: deeper screens slide in from the right,
+        // going back slides the parent in from the left, with a short fade.
+        // Offsets are a fraction of the width (not a full push) so both
+        // screens are mostly overlapping - less to draw per frame.
+        androidx.compose.animation.AnimatedContent(
+            targetState = route,
+            transitionSpec = { routeTransition(initialState, targetState) },
+            label = "route",
+        ) { r ->
+        when (r) {
             AppRoute.BRAND -> com.navigator.app.ui.screens.BrandSelectScreen(
                 onPair = { brand ->
                     settings.brand = brand
@@ -421,33 +520,29 @@ private fun OpenDashApp(
                 onOpenLogs = { logsReturnRoute = AppRoute.PAIRING; route = AppRoute.LOGS }
             )
             AppRoute.MAIN -> {
-                // A single on-screen D-pad overlays every MAIN sub-screen so the
-                // phone itself becomes a "gamepad": the same Up/Down/Set/Back
-                // pipeline as the handlebar remote, usable without the bike.
-                com.navigator.app.ui.components.RemoteDpadScaffold(
-                    onButton = { button ->
-                        stateMachine.onButton(
-                            button,
-                            System.currentTimeMillis(),
-                            NotificationRepository.entries.value.size,
-                        )
-                    },
-                ) {
-                    when (uiState.screen) {
-                        ControllerScreen.NOTIFICATIONS -> NotificationScreen(
-                            settings = settings,
-                            scrollIndex = uiState.notificationScrollIndex
-                        )
-                        ControllerScreen.DIRECTION -> DirectionScreen(onOpenMaps = actions::openMaps)
-                        else -> GridMenuScreen(
-                            gridSelection = uiState.gridSelection,
-                            onSelectGrid = { index ->
-                                stateMachine.touchSelectGrid(index, System.currentTimeMillis())
-                            },
-                            onOpenSettings = { route = AppRoute.SETTINGS },
-                            onOpenRides = { route = AppRoute.RIDES }
-                        )
-                    }
+                // No on-screen D-pad any more (R76 field request): the bike's own
+                // handlebar remote and touch both drive these screens directly.
+                when (uiState.screen) {
+                    ControllerScreen.NOTIFICATIONS -> NotificationScreen(
+                        settings = settings,
+                        scrollIndex = uiState.notificationScrollIndex
+                    )
+                    ControllerScreen.DIRECTION -> DirectionScreen(onOpenMaps = actions::openMaps)
+                    ControllerScreen.MUSIC -> com.navigator.app.ui.screens.MusicPlayerScreen(
+                        onBack = { stateMachine.touchBack() },
+                        onPlayPause = actions::playPauseMedia,
+                        onNext = actions::nextTrack,
+                        onPrevious = actions::previousTrack,
+                    )
+                    else -> GridMenuScreen(
+                        gridSelection = uiState.gridSelection,
+                        onSelectGrid = { index ->
+                            stateMachine.touchSelectGrid(index, System.currentTimeMillis())
+                        },
+                        onOpenSettings = { route = AppRoute.SETTINGS },
+                        onOpenRides = { route = AppRoute.RIDES },
+                        onOpenDeveloper = { devReturnRoute = AppRoute.MAIN; route = AppRoute.DEVELOPER }
+                    )
                 }
             }
             AppRoute.SETTINGS -> SettingsScreen(
@@ -455,6 +550,7 @@ private fun OpenDashApp(
                 onBack = { route = AppRoute.MAIN },
                 onOpenLogs = { logsReturnRoute = AppRoute.SETTINGS; route = AppRoute.LOGS },
                 onOpenSymbolTest = { route = AppRoute.SYMBOL_TEST },
+                onOpenDeveloper = { devReturnRoute = AppRoute.SETTINGS; route = AppRoute.DEVELOPER },
                 onOpenTurnCalibration = { route = AppRoute.TURN_CALIBRATION },
                 onOpenVibrationCalibration = { route = AppRoute.VIBRATION_CALIBRATION },
                 onOpenRides = { route = AppRoute.RIDES },
@@ -478,6 +574,9 @@ private fun OpenDashApp(
             AppRoute.SYMBOL_TEST -> com.navigator.app.ui.screens.SymbolTestScreen(
                 onBack = { route = AppRoute.SETTINGS }
             )
+            AppRoute.DEVELOPER -> com.navigator.app.ui.screens.DeveloperScreen(
+                onBack = { route = devReturnRoute }
+            )
             AppRoute.TURN_CALIBRATION -> com.navigator.app.ui.screens.TurnCalibrationScreen(
                 onBack = { route = AppRoute.SETTINGS }
             )
@@ -489,8 +588,23 @@ private fun OpenDashApp(
                 onBack = {
                     MainActivity.importedGpx.value = null
                     route = AppRoute.MAIN
-                }
+                },
+                onOpenAnalytics = { f ->
+                    analyticsFile = f
+                    route = AppRoute.RIDE_ANALYTICS
+                },
+                onOpenHeatmap = { route = AppRoute.TRAFFIC_MAP }
             )
+            AppRoute.TRAFFIC_MAP -> com.navigator.app.ui.screens.TrafficHeatmapScreen(
+                onBack = { route = AppRoute.RIDES }
+            )
+            AppRoute.RIDE_ANALYTICS -> analyticsFile?.let { f ->
+                com.navigator.app.ui.screens.RideAnalyticsScreen(
+                    file = f,
+                    onBack = { route = AppRoute.RIDES }
+                )
+            } ?: run { route = AppRoute.RIDES }
+        }
         }
         if (showGreeting) {
             ConnectGreeting(name = settings.userName?.trim().orEmpty())

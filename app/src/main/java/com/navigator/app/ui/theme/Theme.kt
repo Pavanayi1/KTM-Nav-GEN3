@@ -43,7 +43,7 @@ private fun schemeFor(t: BrandTheme) = if (t.isDark) {
 }
 
 @Composable
-fun OpenDashTheme(
+fun NavigatorTheme(
     highContrast: Boolean = false,
     content: @Composable () -> Unit
 ) {

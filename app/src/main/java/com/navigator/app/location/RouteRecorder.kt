@@ -43,13 +43,31 @@ class RouteRecorder(private val context: Context) : LocationListener {
 
         fun routesDir(context: Context): File = File(context.filesDir, "routes").apply { mkdirs() }
 
+        /** A ride being recorded right now (null = none), for the Rides screen's Record button. */
+        data class Active(val startedMs: Long, val manual: Boolean, val fileName: String)
+
+        private val _active = kotlinx.coroutines.flow.MutableStateFlow<Active?>(null)
+        val active: kotlinx.coroutines.flow.StateFlow<Active?> = _active
+
         fun listRoutes(context: Context): List<File> =
             routesDir(context).listFiles { f -> f.extension == "gpx" }?.sortedByDescending { it.name } ?: emptyList()
     }
 
     private val settings = AppSettings(context)
+    private val imuRecorder = ImuRecorder(context)
     private var powerReceiver: BroadcastReceiver? = null
     private var recording = false
+    /** Rider tapped Record: record regardless of auto-record, power or bike link, until they tap Stop. */
+    private var manual = false
+    /**
+     * Rider tapped Stop on an auto-recorded ride: don't let auto-record reopen
+     * a track straight away. Cleared when the bike disconnects, so the next
+     * ride records normally.
+     */
+    private var suppressAuto = false
+
+    /** True while a GPX is open - the idle-shutdown watchdog must not kill a live ride. */
+    val isRecording: Boolean get() = recording
     private var charging = false
     private var currentFile: File? = null
     /** Live engine state pushed by the service from VibrationMonitor; null = unknown/uncalibrated. */
@@ -84,6 +102,26 @@ class RouteRecorder(private val context: Context) : LocationListener {
     fun stop() {
         powerReceiver?.let { runCatching { context.unregisterReceiver(it) } }
         powerReceiver = null
+        manual = false
+        stopRecording()
+    }
+
+    /** Record button. False when location permission is missing (nothing to record with). */
+    fun startManual(): Boolean {
+        if (!hasPermission()) return false
+        manual = true
+        suppressAuto = false
+        if (!recording) startRecording()
+        else _active.value = _active.value?.copy(manual = true)
+        AppLogger.log("Route", "Manual recording requested")
+        return true
+    }
+
+    /** Stop button: ends the current ride whether it was started by hand or by auto-record. */
+    fun stopManual() {
+        manual = false
+        if (settings.routeAutoRecordEnabled && isBikeConnected()) suppressAuto = true
+        AppLogger.log("Route", "Recording stopped by the rider")
         stopRecording()
     }
 
@@ -115,12 +153,17 @@ class RouteRecorder(private val context: Context) : LocationListener {
 
     /**
      * Recording is on iff the setting is enabled, we have location permission,
-     * and either the phone is charging or the rider opted out of power-save
-     * (in which case battery rides record too, at the slow cadence).
+     * the phone is charging (or the rider opted out of power-save), AND the
+     * bike is actually connected. That last check matters: without it, a
+     * charging phone recorded GPS on any drive/walk/car trip, polluting the
+     * ride list and the traffic heatmap with non-bike data.
      */
     fun reevaluate() {
         val powerOk = isCharging() || !settings.powerSaveEnabled
-        val shouldRecord = settings.routeAutoRecordEnabled && powerOk && hasPermission()
+        val connected = isBikeConnected()
+        if (!connected) suppressAuto = false
+        val autoOk = !suppressAuto && settings.routeAutoRecordEnabled && powerOk && connected
+        val shouldRecord = hasPermission() && (manual || autoOk)
         if (shouldRecord && !recording) startRecording()
         else if (!shouldRecord && recording) stopRecording()
         else if (recording && charging != isCharging()) {
@@ -129,6 +172,10 @@ class RouteRecorder(private val context: Context) : LocationListener {
             requestUpdates()
         }
     }
+
+    private fun isBikeConnected(): Boolean =
+        com.navigator.app.ble.BccuConnectionService.connectionState.value ==
+            com.navigator.app.ble.BccuConnectionService.ConnectionState.AUTHENTICATED
 
     private fun isCharging(): Boolean {
         val bm = context.getSystemService(Context.BATTERY_SERVICE) as BatteryManager
@@ -144,13 +191,17 @@ class RouteRecorder(private val context: Context) : LocationListener {
         try {
             file.writeText(
                 """<?xml version="1.0" encoding="UTF-8"?>
-<gpx version="1.1" creator="Navigator Gen3" xmlns="http://www.topografix.com/GPX/1/1" xmlns:od="urn:opendash:gpx">
+<gpx version="1.1" creator="Navigator Gen3" xmlns="http://www.topografix.com/GPX/1/1" xmlns:od="urn:navigator:gpx">
 <trk><name>${file.nameWithoutExtension}</name><trkseg>
 """
             )
             currentFile = file
             recording = true
+            _active.value = Active(System.currentTimeMillis(), manual, file.name)
             requestUpdates()
+            // Accel/gyro sidecar for ride analytics (rough-road detection etc.);
+            // rides on phones without the sensors just won't have one.
+            imuRecorder.start(file)
             AppLogger.log("Route", "Recording started -> ${file.name} (${if (isCharging()) "charging, 1s" else "battery, 5s"})")
         } catch (e: Exception) {
             AppLogger.log("Route", "!! Failed to start route recording: $e")
@@ -175,6 +226,8 @@ class RouteRecorder(private val context: Context) : LocationListener {
     private fun stopRecording() {
         if (!recording) return
         recording = false
+        _active.value = null
+        imuRecorder.stop()
         val lm = context.getSystemService(Context.LOCATION_SERVICE) as LocationManager
         runCatching { lm.removeUpdates(this) }
         currentFile?.let { f ->

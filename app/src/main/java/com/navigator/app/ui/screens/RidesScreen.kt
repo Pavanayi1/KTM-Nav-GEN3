@@ -24,6 +24,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -43,11 +44,13 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.navigator.app.location.RouteRecorder
 import com.navigator.app.ui.components.Eyebrow
+import com.navigator.app.ui.components.ScreenHeader
+import com.navigator.app.ui.components.pressFeedback
 import com.navigator.app.ui.theme.Barlow
 import com.navigator.app.ui.theme.BarlowCondensed
 import com.navigator.app.ui.theme.JetBrainsMono
 import com.navigator.app.ui.theme.Ktm
-import com.navigator.app.ui.theme.OpenDashIcons
+import com.navigator.app.ui.theme.NavIcons
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.File
@@ -225,12 +228,18 @@ private fun haversineM(lat1: Double, lon1: Double, lat2: Double, lon2: Double): 
 
 /** Ride list → tap → post-processed detail (speed-colored track, speed graph, stops). */
 @Composable
-fun RidesScreen(onBack: () -> Unit, initialFile: File? = null) {
+fun RidesScreen(
+    onBack: () -> Unit,
+    initialFile: File? = null,
+    onOpenAnalytics: (File) -> Unit = {},
+    onOpenHeatmap: () -> Unit = {},
+) {
     val context = LocalContext.current
     // Keyed on initialFile: a GPX opened from another app while this screen is
     // already up (singleTask onNewIntent) swaps the detail view to the new file.
     var selected by remember(initialFile) { mutableStateOf(initialFile) }
-    val files = remember(initialFile) { RouteRecorder.listRoutes(context) }
+    var refreshKey by remember { mutableStateOf(0) }
+    val files = remember(initialFile, refreshKey) { RouteRecorder.listRoutes(context) }
 
     Column(
         modifier = Modifier
@@ -240,27 +249,113 @@ fun RidesScreen(onBack: () -> Unit, initialFile: File? = null) {
             .padding(horizontal = 18.dp)
             .padding(top = 12.dp, bottom = 12.dp),
     ) {
-        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
-            Icon(
-                OpenDashIcons.ChevronLeft, contentDescription = "Back", tint = Ktm.Muted,
-                modifier = Modifier
-                    .clip(CircleShape)
-                    .clickable { if (selected != null) selected = null else onBack() }
-                    .padding(6.dp)
-                    .size(24.dp),
-            )
-            Text(
-                if (selected == null) "RIDES" else selected!!.nameWithoutExtension.removePrefix("route_"),
-                color = Ktm.White, fontFamily = BarlowCondensed, fontWeight = FontWeight.Bold,
-                fontStyle = FontStyle.Italic, fontSize = 20.sp,
-                modifier = Modifier.padding(start = 8.dp),
-            )
+        ScreenHeader(
+            title = if (selected == null) "Rides" else selected!!.nameWithoutExtension.removePrefix("route_"),
+            onBack = { if (selected != null) selected = null else onBack() },
+        ) {
+            if (selected == null && files.isNotEmpty()) {
+                // Count and total size: the two things that tell a rider whether
+                // it is time to back up and clear some out.
+                val totalKb = files.sumOf { it.length() } / 1024.0
+                Text(
+                    "${files.size} recorded · " +
+                        if (totalKb >= 1024) "%.1f MB".format(totalKb / 1024) else "%.0f KB".format(totalKb),
+                    color = Ktm.Dim, fontFamily = JetBrainsMono, fontSize = 12.sp,
+                )
+            }
         }
         Spacer(Modifier.height(14.dp))
 
         val sel = selected
-        if (sel == null) RideList(files) { selected = it }
-        else RideDetail(sel)
+        if (sel == null) {
+            RecordRideButton(onStopped = { refreshKey++ })
+            Spacer(Modifier.height(10.dp))
+            if (files.isNotEmpty()) {
+                com.navigator.app.ui.components.KtmOutlineButton("TRAFFIC HEATMAP — ALL RIDES") { onOpenHeatmap() }
+                Spacer(Modifier.height(10.dp))
+            }
+            RideList(files) { selected = it }
+        } else RideDetail(
+            sel, onOpenAnalytics,
+            onDelete = {
+                com.navigator.app.analytics.ImuLog.sidecarFor(sel).delete()
+                sel.delete()
+                selected = null
+                refreshKey++
+            },
+        )
+    }
+}
+
+/**
+ * Start/stop a ride by hand. Solid accent when idle; red with a live timer
+ * while recording (whether it was started here or by auto-record), so the
+ * rider can always see - and end - what's being logged.
+ */
+@Composable
+private fun RecordRideButton(onStopped: () -> Unit) {
+    val context = LocalContext.current
+    val active by RouteRecorder.active.collectAsState()
+    var now by remember { mutableStateOf(System.currentTimeMillis()) }
+    LaunchedEffect(active) {
+        while (active != null) {
+            now = System.currentTimeMillis()
+            kotlinx.coroutines.delay(1000)
+        }
+    }
+    val rec = active
+    val shape = RoundedCornerShape(3.dp)
+    Row(
+        modifier = Modifier.pressFeedback(pressedScale = 0.975f) {
+                if (rec != null) {
+                    com.navigator.app.ble.BccuConnectionService.stopRecordingIfRunning()
+                    onStopped()
+                } else {
+                    when (com.navigator.app.ble.BccuConnectionService.startManualRecordingIfRunning()) {
+                        true -> onStopped() // refresh: the new track shows in the list
+                        false -> android.widget.Toast.makeText(
+                            context, "Allow location access to record rides", android.widget.Toast.LENGTH_LONG
+                        ).show()
+                        null -> android.widget.Toast.makeText(
+                            context, "Pair your bike first - recording runs in the connection service",
+                            android.widget.Toast.LENGTH_LONG
+                        ).show()
+                    }
+                }
+            }
+            .fillMaxWidth()
+            .clip(shape)
+            .background(if (rec == null) Ktm.Orange else Ktm.Danger)
+            .padding(horizontal = 16.dp, vertical = 14.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        val fg = if (rec == null) Ktm.OnAccent else Color.White
+        Box(
+            Modifier
+                .size(14.dp)
+                .clip(if (rec == null) CircleShape else RoundedCornerShape(2.dp))
+                .background(fg)
+        )
+        Column(Modifier.weight(1f).padding(start = 14.dp)) {
+            Text(
+                if (rec == null) "RECORD RIDE" else "STOP RECORDING",
+                color = fg, fontFamily = BarlowCondensed, fontWeight = FontWeight.Bold,
+                fontStyle = FontStyle.Italic, fontSize = 18.sp, letterSpacing = 0.4.sp,
+            )
+            Text(
+                if (rec == null) "Logs GPS now, bike connected or not"
+                else (if (rec.manual) "Started by you" else "Auto-recording") + " · tap to stop",
+                color = fg.copy(alpha = 0.8f), fontFamily = JetBrainsMono, fontSize = 11.sp,
+            )
+        }
+        if (rec != null) {
+            val secs = ((now - rec.startedMs) / 1000).coerceAtLeast(0)
+            Text(
+                if (secs >= 3600) "%d:%02d:%02d".format(secs / 3600, secs / 60 % 60, secs % 60)
+                else "%02d:%02d".format(secs / 60, secs % 60),
+                color = fg, fontFamily = JetBrainsMono, fontWeight = FontWeight.Bold, fontSize = 16.sp,
+            )
+        }
     }
 }
 
@@ -271,7 +366,7 @@ private fun RideList(files: List<File>, onOpen: (File) -> Unit) {
             Text("No rides recorded yet.", color = Ktm.TextSecondary, fontFamily = Barlow, fontSize = 15.sp)
             Spacer(Modifier.height(6.dp))
             Text(
-                "Turn on \"Auto-record routes\" in Settings → Riding.\nRides record while the phone is on bike power.",
+                "Tap Record ride to start one now, or turn on\n\"Auto-record rides\" in Settings → Recording.",
                 color = Ktm.Dim, fontFamily = Barlow, fontSize = 13.sp, lineHeight = 18.sp,
                 textAlign = androidx.compose.ui.text.style.TextAlign.Center,
             )
@@ -286,29 +381,30 @@ private fun RideList(files: List<File>, onOpen: (File) -> Unit) {
             val stamp = runCatching { nameFmt.parse(f.nameWithoutExtension.removePrefix("route_"))?.let(displayFmt::format) }
                 .getOrNull() ?: f.nameWithoutExtension
             Row(
-                modifier = Modifier
+                modifier = Modifier.pressFeedback(pressedScale = 0.98f) { onOpen(f) }
                     .fillMaxWidth()
                     .clip(RoundedCornerShape(Ktm.RadiusRow))
                     .background(Ktm.Surface)
                     .border(1.dp, Ktm.Border, RoundedCornerShape(Ktm.RadiusRow))
-                    .clickable { onOpen(f) }
-                    .padding(14.dp),
+                    .padding(horizontal = 16.dp, vertical = 15.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                Icon(OpenDashIcons.Navigation, contentDescription = null, tint = Ktm.Orange, modifier = Modifier.size(22.dp))
-                Column(modifier = Modifier.weight(1f).padding(start = 12.dp)) {
-                    Text(stamp, color = Ktm.White, fontFamily = BarlowCondensed,
-                        fontWeight = FontWeight.Bold, fontSize = 16.sp)
-                    Text("%.0f KB".format(f.length() / 1024.0), color = Ktm.Dim, fontFamily = Barlow, fontSize = 12.sp)
+                Icon(NavIcons.Wave, contentDescription = null, tint = Ktm.Orange, modifier = Modifier.size(22.dp))
+                Column(modifier = Modifier.weight(1f).padding(start = 14.dp)) {
+                    Text(stamp, color = Ktm.White, fontFamily = Barlow,
+                        fontWeight = FontWeight.SemiBold, fontSize = 17.sp)
+                    Text("%.0f KB".format(f.length() / 1024.0), color = Ktm.Muted,
+                        fontFamily = JetBrainsMono, fontSize = 12.sp, modifier = Modifier.padding(top = 1.dp))
                 }
-                Text("›", color = Ktm.Muted, fontSize = 18.sp)
+                Icon(NavIcons.ChevronRight, contentDescription = null, tint = Ktm.Dim,
+                    modifier = Modifier.size(16.dp))
             }
         }
     }
 }
 
 @Composable
-private fun RideDetail(file: File) {
+private fun RideDetail(file: File, onOpenAnalytics: (File) -> Unit = {}, onDelete: () -> Unit = {}) {
     val context = LocalContext.current
     var ride by remember(file) { mutableStateOf<RideData?>(null) }
     var parseFailed by remember(file) { mutableStateOf(false) }
@@ -340,12 +436,22 @@ private fun RideDetail(file: File) {
         }
         Spacer(Modifier.height(12.dp))
 
-        // Track, colored by speed.
+        // Track, colored by speed - real Google map (traffic on) when a key is
+        // configured, the canvas sketch otherwise. Amber = detected crawl.
         Eyebrow("Track — colored by speed", color = Ktm.Dim, fontSize = 11, letterSpacing = 1.5)
         Spacer(Modifier.height(6.dp))
-        TrackCanvas(r)
-        Spacer(Modifier.height(8.dp))
-        LegendRow()
+        val geo = remember(r) {
+            val times = LongArray(r.points.size) { r.points[it].timeMs }
+            val speeds = FloatArray(r.points.size) { r.points[it].speedKmh }
+            val engine = Array<Boolean?>(r.points.size) { r.points[it].engineOn }
+            com.navigator.app.ui.components.TrackGeo(
+                lats = DoubleArray(r.points.size) { r.points[it].lat },
+                lons = DoubleArray(r.points.size) { r.points[it].lon },
+                speedsKmh = speeds,
+                trafficRanges = com.navigator.app.analytics.RideEventDetector.trafficRanges(times, speeds, engine),
+            )
+        }
+        com.navigator.app.ui.components.SpeedTrackMap(geo = geo)
         Spacer(Modifier.height(16.dp))
 
         // Speed graph.
@@ -383,11 +489,15 @@ private fun RideDetail(file: File) {
         }
         Spacer(Modifier.height(16.dp))
 
+        // Full analytics: map + charts + scrub + fuel estimate.
+        com.navigator.app.ui.components.KtmPrimaryButton("RIDE ANALYTICS") { onOpenAnalytics(file) }
+        Spacer(Modifier.height(10.dp))
+
         // Share this ride's raw GPX.
         com.navigator.app.ui.components.KtmOutlineButton("Share GPX") {
             runCatching {
                 val uri = androidx.core.content.FileProvider.getUriForFile(
-                    context, "com.navigator.app.fileprovider", file
+                    context, "${com.navigator.app.BuildConfig.APPLICATION_ID}.fileprovider", file
                 )
                 val intent = android.content.Intent(android.content.Intent.ACTION_SEND)
                     .setType("application/gpx+xml")
@@ -395,6 +505,32 @@ private fun RideDetail(file: File) {
                     .addFlags(android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION)
                 context.startActivity(android.content.Intent.createChooser(intent, "Share ride"))
             }
+        }
+        Spacer(Modifier.height(10.dp))
+
+        // Delete a bad recording (e.g. one from before rides were gated on
+        // the bike being connected) so it stops skewing the traffic heatmap.
+        var confirmDelete by remember(file) { mutableStateOf(false) }
+        com.navigator.app.ui.components.KtmOutlineButton("Delete ride") { confirmDelete = true }
+        if (confirmDelete) {
+            androidx.compose.material3.AlertDialog(
+                onDismissRequest = { confirmDelete = false },
+                title = { Text("Delete this ride?", color = Ktm.White, fontFamily = BarlowCondensed, fontWeight = FontWeight.Bold) },
+                text = { Text("This removes the GPX (and its sensor data) permanently. It also stops contributing to the traffic heatmap.", color = Ktm.TextSecondary, fontFamily = Barlow) },
+                confirmButton = {
+                    Text(
+                        "DELETE", color = Ktm.Danger, fontFamily = BarlowCondensed, fontWeight = FontWeight.Bold,
+                        modifier = Modifier.clickable { confirmDelete = false; onDelete() }.padding(10.dp),
+                    )
+                },
+                dismissButton = {
+                    Text(
+                        "CANCEL", color = Ktm.Dim, fontFamily = BarlowCondensed, fontWeight = FontWeight.Bold,
+                        modifier = Modifier.clickable { confirmDelete = false }.padding(10.dp),
+                    )
+                },
+                containerColor = Ktm.Surface,
+            )
         }
         Spacer(Modifier.height(10.dp))
     }

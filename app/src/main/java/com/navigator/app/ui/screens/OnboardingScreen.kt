@@ -58,7 +58,7 @@ import androidx.compose.ui.unit.sp
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import com.navigator.app.settings.AppSettings
-import com.navigator.app.ui.OpenDashPermissions
+import com.navigator.app.ui.NavigatorPermissions
 import com.navigator.app.ui.components.Eyebrow
 import com.navigator.app.ui.components.KtmOutlineButton
 import com.navigator.app.ui.components.KtmPrimaryButton
@@ -66,7 +66,7 @@ import com.navigator.app.ui.theme.Barlow
 import com.navigator.app.ui.theme.BarlowCondensed
 import com.navigator.app.ui.theme.JetBrainsMono
 import com.navigator.app.ui.theme.Ktm
-import com.navigator.app.ui.theme.OpenDashIcons
+import com.navigator.app.ui.theme.NavIcons
 
 /**
  * First-run onboarding: a five-step walkthrough — brand welcome, two feature
@@ -79,8 +79,10 @@ import com.navigator.app.ui.theme.OpenDashIcons
  * scrollable so the layout survives small screens and short aspect ratios
  * without clipping the pinned action buttons.
  */
-private const val STEP_COUNT = 6
-private const val STEP_NAME = 4
+private const val STEP_COUNT = 7
+private const val STEP_RIDES = 4
+private const val STEP_NAME = 5
+private const val STEP_PERMISSIONS = 6
 
 @Composable
 fun OnboardingScreen(settings: AppSettings, onComplete: () -> Unit) {
@@ -101,7 +103,7 @@ fun OnboardingScreen(settings: AppSettings, onComplete: () -> Unit) {
     }
     val skipAll = {
         settings.userName = userName
-        skipPermLauncher.launch(OpenDashPermissions.runtimePermissions())
+        skipPermLauncher.launch(NavigatorPermissions.runtimePermissions())
     }
 
     Column(
@@ -112,8 +114,15 @@ fun OnboardingScreen(settings: AppSettings, onComplete: () -> Unit) {
             .padding(horizontal = 22.dp)
             .padding(top = 12.dp, bottom = 18.dp),
     ) {
-        OnboardingHeader(step = step)
-        Spacer(Modifier.height(26.dp))
+        OnboardingHeader(
+            step = step,
+            onBack = when (step) {
+                0 -> null
+                else -> ({ step -= 1 })
+            },
+            onSkip = if (step >= STEP_NAME) null else skipAll,
+        )
+        Spacer(Modifier.height(20.dp))
 
         AnimatedContent(
             targetState = step,
@@ -132,39 +141,45 @@ fun OnboardingScreen(settings: AppSettings, onComplete: () -> Unit) {
                 when (current) {
                     0 -> WelcomeStep(
                         onContinue = { step = 1 },
-                        onSkip = skipAll,
                     )
                     1 -> FeatureStep(
+                        step = 1,
                         eyebrow = "Mirror",
                         headline = "See it\nwithout\nlooking down.",
                         body = "Incoming notifications and live turn-by-turn navigation are mirrored " +
                             "straight to your bike's dash — so your phone stays in your pocket.",
                         illustration = { DashPreview() },
                         onContinue = { step = 2 },
-                        onBack = { step = 0 },
-                        onSkip = skipAll,
                     )
                     2 -> FeatureStep(
+                        step = 2,
                         eyebrow = "Handlebar remote",
                         headline = "Control it\nfrom the bar.",
-                        body = "The four-button handlebar remote drives media, answers calls, and moves " +
-                            "through the menu — completely hands-free while you ride.",
+                        body = "Long-press Up on the bars to switch the four buttons between a D-pad for " +
+                            "your phone, music control, or handing them back to the bike. Long-press Down " +
+                            "opens Google Maps.",
                         illustration = { RemotePreview() },
                         onContinue = { step = 3 },
-                        onBack = { step = 1 },
-                        onSkip = skipAll,
                     )
                     3 -> RideIntelligenceStep(
                         settings = settings,
+                        onContinue = { step = STEP_RIDES },
+                    )
+                    STEP_RIDES -> FeatureStep(
+                        step = STEP_RIDES,
+                        eyebrow = "Rides & analytics",
+                        headline = "Every ride,\nreplayed.",
+                        body = "Rides record themselves once the bike connects. Afterwards, replay the route " +
+                            "on a map at 30x with speed, acceleration and altitude tracking underneath — plus " +
+                            "a smoothness score, a fuel estimate, and a map of where you always lose time.",
+                        illustration = { RidesPreview() },
                         onContinue = { step = STEP_NAME },
-                        onBack = { step = 2 },
-                        onSkip = skipAll,
                     )
                     STEP_NAME -> NameStep(
                         userName = userName,
                         onNameChange = { userName = it; settings.userName = it },
-                        onBack = { step = 3 },
-                        onContinue = { step = 5 },
+                        onBack = { step = STEP_RIDES },
+                        onContinue = { step = STEP_PERMISSIONS },
                     )
                     else -> PermissionsStep(
                         onBack = { step = STEP_NAME },
@@ -182,28 +197,59 @@ fun OnboardingScreen(settings: AppSettings, onComplete: () -> Unit) {
 
 /** Wordmark + a segmented progress indicator that widens the current step. */
 @Composable
-private fun OnboardingHeader(step: Int) {
-    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
-        Text("NAVIGATOR", color = Ktm.White, fontFamily = BarlowCondensed,
-            fontWeight = FontWeight.Bold, fontStyle = FontStyle.Italic, fontSize = 22.sp)
-        Text("GEN3", color = Ktm.Orange, fontFamily = BarlowCondensed,
-            fontWeight = FontWeight.Bold, fontStyle = FontStyle.Italic, fontSize = 22.sp)
-        Spacer(Modifier.weight(1f))
-        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-            repeat(STEP_COUNT) { i ->
-                Box(
-                    modifier = Modifier
-                        .size(width = if (i == step) 20.dp else 7.dp, height = 7.dp)
-                        .clip(CircleShape)
-                        .background(
-                            when {
-                                i == step -> Ktm.Orange
-                                i < step -> Ktm.OrangeDeep
-                                else -> Ktm.Border
-                            }
-                        ),
-                )
+private fun OnboardingHeader(step: Int, onBack: (() -> Unit)?, onSkip: (() -> Unit)?) {
+    // Back and Skip live at the top, where the design puts them: they are
+    // escape hatches, and putting them under the primary button (the old
+    // layout) made "Skip all" compete with "Continue" for the same thumb.
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = Modifier.fillMaxWidth(),
+    ) {
+        if (onBack != null) {
+            Text(
+                "Back", color = Ktm.Muted, fontFamily = Barlow, fontWeight = FontWeight.SemiBold,
+                fontSize = 14.sp,
+                modifier = Modifier.clip(RoundedCornerShape(8.dp)).clickable(onClick = onBack)
+                    .padding(horizontal = 4.dp, vertical = 6.dp),
+            )
+        } else {
+            Row {
+                Text("NAVIGATOR", color = Ktm.White, fontFamily = BarlowCondensed,
+                    fontWeight = FontWeight.Bold, fontStyle = FontStyle.Italic, fontSize = 20.sp)
+                Text("GEN3", color = Ktm.Orange, fontFamily = BarlowCondensed,
+                    fontWeight = FontWeight.Bold, fontStyle = FontStyle.Italic, fontSize = 20.sp)
             }
+        }
+        Spacer(Modifier.weight(1f))
+        if (onSkip != null) {
+            Text(
+                "Skip all", color = Ktm.Dim, fontFamily = Barlow, fontWeight = FontWeight.SemiBold,
+                fontSize = 14.sp,
+                modifier = Modifier.clip(RoundedCornerShape(8.dp)).clickable(onClick = onSkip)
+                    .padding(horizontal = 4.dp, vertical = 6.dp),
+            )
+        }
+    }
+}
+
+/**
+ * Segmented progress dots, centred above the primary action - the current step
+ * is a wide accent pill so the position reads without counting.
+ */
+@Composable
+private fun StepDots(step: Int) {
+    Row(
+        modifier = Modifier.fillMaxWidth().padding(bottom = 16.dp),
+        horizontalArrangement = Arrangement.Center,
+    ) {
+        repeat(STEP_COUNT) { i ->
+            Box(
+                modifier = Modifier
+                    .padding(horizontal = 3.5.dp)
+                    .size(width = if (i == step) 26.dp else 8.dp, height = 8.dp)
+                    .clip(CircleShape)
+                    .background(if (i == step) Ktm.Orange else Ktm.Bezel),
+            )
         }
     }
 }
@@ -213,12 +259,15 @@ private fun OnboardingHeader(step: Int) {
 /* ----------------------------------------------------------------------- */
 
 @Composable
-private fun ColumnScope.WelcomeStep(onContinue: () -> Unit, onSkip: () -> Unit) {
+private fun ColumnScope.WelcomeStep(onContinue: () -> Unit) {
     Column(
         modifier = Modifier.weight(1f).verticalScroll(rememberScrollState()),
     ) {
         Spacer(Modifier.height(4.dp))
-        BrandBadge()
+        com.navigator.app.ui.components.BikeHeroCard(
+            brand = Ktm.current.brand,
+            modifier = Modifier.fillMaxWidth().height(190.dp),
+        )
         Spacer(Modifier.height(24.dp))
         Eyebrow("Welcome", color = Ktm.Orange, fontSize = 12, letterSpacing = 2.0)
         Spacer(Modifier.height(8.dp))
@@ -229,7 +278,7 @@ private fun ColumnScope.WelcomeStep(onContinue: () -> Unit, onSkip: () -> Unit) 
         )
         Spacer(Modifier.height(14.dp))
         Text(
-            "Navigator Gen3 mirrors your notifications and navigation to the KTM dash, and turns " +
+            "Navigator Gen3 mirrors your notifications and navigation to the ${Ktm.current.displayName} dash, and turns " +
                 "the handlebar remote into a hands-free controller for your phone.",
             color = Ktm.Muted2, fontFamily = Barlow, fontSize = 15.sp, lineHeight = 22.sp,
         )
@@ -237,19 +286,17 @@ private fun ColumnScope.WelcomeStep(onContinue: () -> Unit, onSkip: () -> Unit) 
         PrivacyRow()
     }
     Spacer(Modifier.height(14.dp))
-    KtmPrimaryButton("Get started", onClick = onContinue)
-    IntroFooter(onBack = null, onSkip = onSkip)
+    StepFooter(step = 0, label = "Get started", onContinue = onContinue)
 }
 
 @Composable
 private fun ColumnScope.FeatureStep(
+    step: Int,
     eyebrow: String,
     headline: String,
     body: String,
     illustration: @Composable () -> Unit,
     onContinue: () -> Unit,
-    onBack: () -> Unit,
-    onSkip: () -> Unit,
 ) {
     Column(
         modifier = Modifier.weight(1f).verticalScroll(rememberScrollState()),
@@ -259,19 +306,17 @@ private fun ColumnScope.FeatureStep(
         Text(
             headline,
             color = Ktm.White, fontFamily = BarlowCondensed, fontWeight = FontWeight.Bold,
-            fontStyle = FontStyle.Italic, fontSize = 38.sp, lineHeight = 36.sp, letterSpacing = (-0.5).sp,
+            fontStyle = FontStyle.Italic, fontSize = 34.sp, lineHeight = 35.sp, letterSpacing = (-0.4).sp,
         )
         Spacer(Modifier.height(14.dp))
         Text(
             body,
             color = Ktm.Muted2, fontFamily = Barlow, fontSize = 15.sp, lineHeight = 22.sp,
         )
-        Spacer(Modifier.height(24.dp))
+        Spacer(Modifier.height(22.dp))
         illustration()
     }
-    Spacer(Modifier.height(14.dp))
-    KtmPrimaryButton("Continue", onClick = onContinue)
-    IntroFooter(onBack = onBack, onSkip = onSkip)
+    StepFooter(step = step, label = "Next", onContinue = onContinue)
 }
 
 /**
@@ -284,8 +329,6 @@ private fun ColumnScope.FeatureStep(
 private fun ColumnScope.RideIntelligenceStep(
     settings: AppSettings,
     onContinue: () -> Unit,
-    onBack: () -> Unit,
-    onSkip: () -> Unit,
 ) {
     var powerSave by remember { mutableStateOf(settings.powerSaveEnabled) }
     Column(
@@ -296,7 +339,7 @@ private fun ColumnScope.RideIntelligenceStep(
         Text(
             "It listens,\nbeeps, and\nkeeps the log.",
             color = Ktm.White, fontFamily = BarlowCondensed, fontWeight = FontWeight.Bold,
-            fontStyle = FontStyle.Italic, fontSize = 38.sp, lineHeight = 36.sp, letterSpacing = (-0.5).sp,
+            fontStyle = FontStyle.Italic, fontSize = 34.sp, lineHeight = 35.sp, letterSpacing = (-0.4).sp,
         )
         Spacer(Modifier.height(14.dp))
         Text(
@@ -314,9 +357,7 @@ private fun ColumnScope.RideIntelligenceStep(
             onToggle = { powerSave = it; settings.powerSaveEnabled = it },
         )
     }
-    Spacer(Modifier.height(14.dp))
-    KtmPrimaryButton("Continue", onClick = onContinue)
-    IntroFooter(onBack = onBack, onSkip = onSkip)
+    StepFooter(step = 3, label = "Next", onContinue = onContinue)
 }
 
 @Composable
@@ -341,44 +382,12 @@ private fun OnboardToggleCard(title: String, desc: String, checked: Boolean, onT
     }
 }
 
-/** Back (left) + Skip (right) row shared by the intro steps. */
+/** Dots + primary action, the bottom block on every intro step. */
 @Composable
-private fun IntroFooter(onBack: (() -> Unit)?, onSkip: (() -> Unit)?) {
-    Spacer(Modifier.height(4.dp))
-    Row(
-        modifier = Modifier.fillMaxWidth(),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        if (onBack != null) {
-            Text(
-                "Back", color = Ktm.Dim, fontFamily = Barlow, fontSize = 13.sp,
-                modifier = Modifier.clickable(onClick = onBack).padding(8.dp),
-            )
-        }
-        Spacer(Modifier.weight(1f))
-        if (onSkip != null) {
-            Text(
-                "Skip all", color = Ktm.Dim, fontFamily = Barlow, fontSize = 13.sp,
-                modifier = Modifier.clickable(onClick = onSkip).padding(8.dp),
-            )
-        }
-    }
-}
-
-/** Orange-ringed bike glyph badge for the welcome hero. */
-@Composable
-private fun BrandBadge() {
-    Box(
-        modifier = Modifier
-            .size(76.dp)
-            .clip(RoundedCornerShape(Ktm.RadiusCard))
-            .background(Ktm.Surface)
-            .border(1.dp, Ktm.Bezel, RoundedCornerShape(Ktm.RadiusCard)),
-        contentAlignment = Alignment.Center,
-    ) {
-        Icon(OpenDashIcons.Bike, contentDescription = null, tint = Ktm.Orange,
-            modifier = Modifier.size(40.dp))
-    }
+private fun StepFooter(step: Int, label: String, enabled: Boolean = true, onContinue: () -> Unit) {
+    Spacer(Modifier.height(14.dp))
+    StepDots(step)
+    KtmPrimaryButton(label, enabled = enabled, onClick = onContinue)
 }
 
 /** "No sign-in · no cloud · on-device" reassurance chip row. */
@@ -393,7 +402,7 @@ private fun PrivacyRow() {
             .padding(horizontal = 14.dp, vertical = 12.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Icon(OpenDashIcons.ShieldCheck, contentDescription = null, tint = Ktm.Green,
+        Icon(NavIcons.ShieldCheck, contentDescription = null, tint = Ktm.Green,
             modifier = Modifier.size(22.dp))
         Column(modifier = Modifier.padding(start = 12.dp)) {
             Text("Private by design", color = Ktm.White, fontFamily = BarlowCondensed,
@@ -410,6 +419,57 @@ private fun PrivacyRow() {
 /* ----------------------------------------------------------------------- */
 
 /** Miniature of the bike dash the app drives (turn info + notification banner). */
+/**
+ * Rides page illustration: a speed-coloured trace with the replay puck part way
+ * along it - the closest a static panel gets to showing what replay does.
+ */
+@Composable
+private fun RidesPreview() {
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(150.dp)
+            .clip(RoundedCornerShape(Ktm.RadiusCard))
+            .background(Ktm.SurfaceAlt)
+            .border(1.dp, Ktm.RowDivider, RoundedCornerShape(Ktm.RadiusCard)),
+    ) {
+        androidx.compose.foundation.Canvas(modifier = Modifier.fillMaxSize().padding(18.dp)) {
+            val w = size.width
+            val h = size.height
+            // A single smooth trace, drawn in three speed bands (slow -> fast)
+            // using the same colour language as the ride map.
+            val pts = listOf(
+                androidx.compose.ui.geometry.Offset(0f, h * 0.82f),
+                androidx.compose.ui.geometry.Offset(w * 0.18f, h * 0.62f),
+                androidx.compose.ui.geometry.Offset(w * 0.34f, h * 0.70f),
+                androidx.compose.ui.geometry.Offset(w * 0.52f, h * 0.34f),
+                androidx.compose.ui.geometry.Offset(w * 0.70f, h * 0.44f),
+                androidx.compose.ui.geometry.Offset(w * 0.86f, h * 0.16f),
+                androidx.compose.ui.geometry.Offset(w, h * 0.24f),
+            )
+            val bands = listOf(Ktm.Green, Ktm.Orange, Ktm.Danger)
+            for (i in 0 until pts.size - 1) {
+                drawLine(
+                    color = bands[(i * bands.size) / (pts.size - 1)],
+                    start = pts[i], end = pts[i + 1],
+                    strokeWidth = 5.dp.toPx(),
+                    cap = androidx.compose.ui.graphics.StrokeCap.Round,
+                )
+            }
+            // The replay puck, two thirds along.
+            val puck = pts[4]
+            drawCircle(Ktm.Orange.copy(alpha = 0.22f), radius = 17.dp.toPx(), center = puck)
+            drawCircle(Ktm.White, radius = 7.dp.toPx(), center = puck)
+        }
+        Text(
+            "REPLAY · 30x",
+            color = Ktm.Dim, fontFamily = BarlowCondensed, fontWeight = FontWeight.Bold,
+            fontSize = 10.sp, letterSpacing = 2.2.sp,
+            modifier = Modifier.align(Alignment.BottomStart).padding(start = 16.dp, bottom = 12.dp),
+        )
+    }
+}
+
 @Composable
 private fun DashPreview() {
     Column(
@@ -422,7 +482,7 @@ private fun DashPreview() {
         verticalArrangement = Arrangement.spacedBy(14.dp),
     ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
-            Icon(OpenDashIcons.TurnArrow, contentDescription = null, tint = Ktm.Orange,
+            Icon(NavIcons.TurnArrow, contentDescription = null, tint = Ktm.Orange,
                 modifier = Modifier.size(44.dp))
             Column(modifier = Modifier.padding(start = 12.dp).weight(1f)) {
                 Row(verticalAlignment = Alignment.Bottom) {
@@ -451,7 +511,7 @@ private fun DashPreview() {
                 .padding(horizontal = 14.dp, vertical = 11.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            Icon(OpenDashIcons.ShieldCheck, contentDescription = null, tint = Ktm.Orange,
+            Icon(NavIcons.ShieldCheck, contentDescription = null, tint = Ktm.Orange,
                 modifier = Modifier.size(22.dp))
             Text("Messages — running 5 min late", color = Ktm.TextPrimary, fontFamily = BarlowCondensed,
                 fontWeight = FontWeight.SemiBold, fontSize = 16.sp,
@@ -515,7 +575,7 @@ private fun ColumnScope.NameStep(
         Text(
             "What should\nwe call you?",
             color = Ktm.White, fontFamily = BarlowCondensed, fontWeight = FontWeight.Bold,
-            fontStyle = FontStyle.Italic, fontSize = 38.sp, lineHeight = 36.sp, letterSpacing = (-0.5).sp,
+            fontStyle = FontStyle.Italic, fontSize = 34.sp, lineHeight = 35.sp, letterSpacing = (-0.4).sp,
         )
         Spacer(Modifier.height(14.dp))
         Text(
@@ -535,9 +595,7 @@ private fun ColumnScope.NameStep(
             modifier = Modifier.fillMaxWidth(),
         )
     }
-    Spacer(Modifier.height(14.dp))
-    KtmPrimaryButton("Continue", enabled = userName.isNotBlank(), onClick = onContinue)
-    IntroFooter(onBack = onBack, onSkip = null)
+    StepFooter(step = STEP_NAME, label = "Continue", enabled = userName.isNotBlank(), onContinue = onContinue)
 }
 
 @Composable
@@ -563,10 +621,10 @@ private fun ColumnScope.PermissionsStep(
     ) { tick++ }
 
     // Read live status (tick forces recomposition after grants).
-    val btGranted = tick.let { OpenDashPermissions.bluetoothGranted(context) }
-    val notifPost = tick.let { OpenDashPermissions.notificationsPostGranted(context) }
-    val phone = tick.let { OpenDashPermissions.phoneGranted(context) }
-    val notifAccess = tick.let { OpenDashPermissions.notificationAccessGranted(context) }
+    val btGranted = tick.let { NavigatorPermissions.bluetoothGranted(context) }
+    val notifPost = tick.let { NavigatorPermissions.notificationsPostGranted(context) }
+    val phone = tick.let { NavigatorPermissions.phoneGranted(context) }
+    val notifAccess = tick.let { NavigatorPermissions.notificationAccessGranted(context) }
     val runtimeAllGranted = btGranted && notifPost && phone
 
     Eyebrow("Permissions", color = Ktm.Orange, fontSize = 12, letterSpacing = 2.0)
@@ -588,39 +646,39 @@ private fun ColumnScope.PermissionsStep(
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
         PermissionCard(
-            icon = OpenDashIcons.Bluetooth,
+            icon = NavIcons.Bluetooth,
             title = "Nearby devices",
             desc = "Find and connect to your bike's dash over Bluetooth. Required to pair.",
             granted = btGranted,
-            onGrant = { permLauncher.launch(OpenDashPermissions.runtimePermissions()) },
+            onGrant = { permLauncher.launch(NavigatorPermissions.runtimePermissions()) },
         )
         PermissionCard(
-            icon = OpenDashIcons.Bell,
+            icon = NavIcons.Bell,
             title = "Notification access",
             desc = "Read incoming notifications so they can be mirrored to the dash.",
             granted = notifAccess,
             onGrant = { context.startActivity(Intent(AndroidSettings.ACTION_NOTIFICATION_LISTENER_SETTINGS)) },
         )
         PermissionCard(
-            icon = OpenDashIcons.Phone,
+            icon = NavIcons.Phone,
             title = "Phone & calls",
             desc = "Answer and silence calls from the handlebar remote while riding.",
             granted = phone,
-            onGrant = { permLauncher.launch(OpenDashPermissions.runtimePermissions()) },
+            onGrant = { permLauncher.launch(NavigatorPermissions.runtimePermissions()) },
         )
         PermissionCard(
-            icon = OpenDashIcons.Navigation,
+            icon = NavIcons.Navigation,
             title = "Post notifications",
             desc = "Show the persistent connection status and dash-mirroring service.",
             granted = notifPost,
-            onGrant = { permLauncher.launch(OpenDashPermissions.runtimePermissions()) },
+            onGrant = { permLauncher.launch(NavigatorPermissions.runtimePermissions()) },
         )
     }
 
     Spacer(Modifier.height(12.dp))
     if (!runtimeAllGranted) {
         KtmPrimaryButton("Grant permissions") {
-            permLauncher.launch(OpenDashPermissions.runtimePermissions())
+            permLauncher.launch(NavigatorPermissions.runtimePermissions())
         }
         Spacer(Modifier.height(10.dp))
         KtmOutlineButton(
@@ -628,9 +686,9 @@ private fun ColumnScope.PermissionsStep(
             onClick = onProceed,
         )
     } else {
+        StepDots(STEP_PERMISSIONS)
         KtmPrimaryButton("Proceed", onClick = onProceed)
     }
-    IntroFooter(onBack = onBack, onSkip = null)
 }
 
 @Composable
@@ -660,7 +718,7 @@ private fun PermissionCard(
                 modifier = Modifier.padding(top = 2.dp))
         }
         if (granted) {
-            Icon(OpenDashIcons.Check, contentDescription = "Granted", tint = Ktm.Green, modifier = Modifier.size(20.dp))
+            Icon(NavIcons.Check, contentDescription = "Granted", tint = Ktm.Green, modifier = Modifier.size(20.dp))
         } else {
             Text("GRANT", color = Ktm.Orange, fontFamily = BarlowCondensed, fontWeight = FontWeight.Bold,
                 fontSize = 12.sp, letterSpacing = 1.sp)

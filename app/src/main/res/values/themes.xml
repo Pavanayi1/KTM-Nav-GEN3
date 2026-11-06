@@ -2,7 +2,7 @@
 <resources>
     <!-- Always-dark launch theme so there is no white flash before Compose
          draws the KTM near-black UI, regardless of the system day/night mode. -->
-    <style name="Theme.OpenDash" parent="Theme.Material3.Dark.NoActionBar">
+    <style name="Theme.Navigator" parent="Theme.Material3.Dark.NoActionBar">
         <item name="android:windowBackground">@color/od_screen</item>
         <item name="android:statusBarColor">@android:color/transparent</item>
         <item name="android:navigationBarColor">@color/od_screen</item>

@@ -1,5 +1,35 @@
 # Changelog
 
+## R76 (2026-11-07)
+
+**Rider Intercom: talk to your pillion.** A phone-to-phone Bluetooth intercom is now built in. Open it
+from the new **INTERCOM** home tile; your pillion uses the small companion app from the same release.
+Voice rides on the media channel so music keeps playing. Pick **Intercom** in the handlebar mode picker
+and **hold SET to talk**, UP/DOWN for volume, BACK for noise suppression, BACK twice to end the call. The
+mic always closes on release, on a dash disconnect, on call end, or after 60 s. Not yet road-tested.
+
+**The dash no longer sits on the chequered flag.** A rider saw the "destination reached" flag for a whole
+ride: words like "arrive at 5:40 PM" in the ETA line were being read as arrival. Arrival now needs a real
+arrival phrase, and on arrival the dash shows a one-time **Location reached** banner.
+
+**Long text scrolls everywhere.** Road names and instructions too long for a dash slot now scroll
+(marquee) instead of being cut off.
+
+**Home and Work on the dash's own navigation menu.** Set Home and Work in Settings → Dash favourites,
+then pick one from the bike's own menu with the handlebar and Google Maps starts the route.
+
+**Connects when the bike does.** If your phone's Bluetooth is already connected to the bike (calls,
+music) the app now starts itself and links the dash, instead of only beeping turns. Optional **Keep
+session alive** in Settings → Connection keeps it linked between stops.
+
+**Fewer wrong arrows.** Street-view photos and incident badges in Google Maps notifications are no longer
+mistaken for turn arrows.
+
+**Home screen.** Tiles light up and glow only while something is live (notifications, a route, music, a
+call) and are plain boxes otherwise. The connection bar animates while connecting. Quick toggles are
+green when on. Scrolling the tiles folds the toggles away to make room. The on-screen D-pad (the + in the
+corner) is gone: the handlebar, touch and the back gesture cover every screen.
+
 ## Unreleased (R29–R33)
 
 **The handlebar remote is now a proper controller.** Long-press UP (from any

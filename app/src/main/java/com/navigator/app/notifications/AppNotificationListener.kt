@@ -25,6 +25,11 @@ import com.navigator.app.settings.AppSettings
  */
 class AppNotificationListener : NotificationListenerService() {
 
+    private companion object {
+        /** Next-turn distance beyond which the center view may show the current song instead of the road name. */
+        const val FAR_TURN_METERS = 500.0
+    }
+
     /**
      * Confirmed via a full hardware calibration pass (BCCU_BLE_PROTOCOL.md
      * section 7.2, 2026-07-05, "Symbol testing" screen): of all 8
@@ -35,32 +40,89 @@ class AppNotificationListener : NotificationListenerService() {
      */
     private val dashIcon = BccuProtocol.NotificationIcon.NOTIFICATION_WAYPOINT
 
+    /**
+     * ONE settings instance for the life of the listener. Constructing
+     * `AppSettings` is not cheap - it opens an EncryptedSharedPreferences
+     * behind an Android Keystore round-trip - and this callback runs on the
+     * main thread for EVERY notification on the phone, not just navigation
+     * ones. Building a fresh one per callback was a multi-millisecond
+     * main-thread stall every time anything on the phone posted a
+     * notification.
+     */
+    private val settings: AppSettings by lazy { AppSettings(this) }
+
+    /**
+     * The system binds this listener for the life of the install, independent
+     * of the connection service and of whether the app was ever opened - which
+     * makes it the one component that can reliably notice "we have something
+     * for the dash but nobody is connected to it" and put the service back up.
+     */
+    override fun onListenerConnected() {
+        super.onListenerConnected()
+        AppLogger.init(this)
+        AppLogger.log("Notif", "Listener connected - making sure the bike service is up")
+        BccuConnectionService.ensureRunning(this)
+        com.navigator.app.connect.BikePresence.maybeEnsure(this, "listener connected")
+    }
+
     override fun onNotificationPosted(sbn: StatusBarNotification) {
-        val settings = AppSettings(this)
         val packageName = sbn.packageName
         val extras = sbn.notification.extras
         val title = extras.getCharSequence(Notification.EXTRA_TITLE)?.toString().orEmpty()
         val text = extras.getCharSequence(Notification.EXTRA_TEXT)?.toString().orEmpty()
-        AppLogger.log("Notif", "Posted: pkg=$packageName category=${sbn.notification.category} title=${redact(title)}")
-        if (title.isBlank() && text.isBlank()) return
+        AppLogger.log("Notif", "Posted: pkg=$packageName category=${sbn.notification.category} title=\"$title\"")
 
-        val isNav = isNavigationNotification(sbn, settings)
-        val appLabel = try {
-            packageManager.getApplicationLabel(packageManager.getApplicationInfo(packageName, 0)).toString()
-        } catch (e: Exception) {
-            packageName
+        // Any notification at all is a free wake-up for the one component of
+        // ours the system keeps alive, so use it to ask whether the bike is
+        // connected while we weren't looking. Throttled to once a minute and a
+        // no-op while the service is up, so this is not the R65 revive loop:
+        // that revived the service on ANY notification, whereas this only acts
+        // when the bike is actually there.
+        com.navigator.app.connect.BikePresence.maybeEnsure(this, "notification wake-up")
+
+        // Dev-mode audit: record what was decided about every notification, so
+        // the Developer screen can answer "why did/didn't that reach the dash".
+        // A plain-prefs boolean read - cheap enough for this per-notification path.
+        val auditing = settings.devModeEnabled
+        fun audit(verdict: NotificationAudit.Verdict, reason: String) {
+            if (!auditing) return
+            NotificationAudit.record(
+                NotificationAudit.Event(
+                    timeMs = System.currentTimeMillis(),
+                    packageName = packageName,
+                    title = title,
+                    text = text,
+                    category = sbn.notification.category,
+                    verdict = verdict,
+                    reason = reason,
+                )
+            )
         }
 
+        if (title.isBlank() && text.isBlank()) {
+            audit(NotificationAudit.Verdict.SKIPPED, "Empty title and text")
+            return
+        }
+
+        val isNav = isNavigationNotification(sbn, settings) && isLiveGuidance(sbn)
+
         if (isNav) {
+            audit(NotificationAudit.Verdict.NAV, "Turn-by-turn guidance → dash center view")
+            // Guidance has started/continued and it belongs on the dash: if the
+            // service isn't up (idle shutdown, or the app was never opened this
+            // boot) this is what brings it back, so the bike gets the same
+            // directions in the background that it gets with the app open.
+            BccuConnectionService.ensureRunning(this)
             val navText = if (title.isNotBlank()) "$title $text" else text
-            AppLogger.log("Notif", "Nav update from $packageName: distance=${redact(title)} road=${redact(text)}")
+            AppLogger.log("Notif", "Nav update from $packageName: distance=\"$title\" road=\"$text\"")
             // Dump every extras key so we can see, from real logs, exactly which
             // field carries ETA/duration/remaining-distance - no guessing which
             // Android notification extra Google Maps uses for that subtitle line.
-            // DEBUG-only: extra *values* carry the destination road/address
-            // (location PII) and AppLogger mirrors every line to the public
-            // Downloads copy, so raw values must never be emitted in a release.
-            if (com.navigator.app.BuildConfig.DEBUG) {
+            // Gated: a nav notification carries 15-30 extras and is reposted
+            // every second or two for the whole ride, so unconditionally this
+            // was tens of log lines per second on the main thread. It's a
+            // diagnostic, so it runs when the rider is actually diagnosing.
+            if (AppLogger.fileLoggingEnabled) {
                 for (key in extras.keySet()) {
                     AppLogger.log("Notif", "  extra[$key] = ${extras.get(key)}")
                 }
@@ -70,12 +132,31 @@ class AppNotificationListener : NotificationListenerService() {
             val (etaText, remainingDistanceText) = parseEtaAndRemainingDistance(subText)
             // title/text line up with the official app's own field split:
             // e.g. title="110 m" (TURN_DISTANCE), text="towards 1st Cross Rd" (TURN_ROAD).
-            BccuConnectionService.sendGuidanceIfRunning(
-                title.ifBlank { null },
-                text.ifBlank { null },
-                etaText,
-                remainingDistanceText
-            )
+            // Far-turn music: while the next turn is comfortably far away, the
+            // road name adds nothing - show the current track there instead.
+            // The countdown (TURN_DISTANCE) and ETA stay live, and the moment
+            // the turn is < 500 m the next update reverts to the road name and
+            // blanks the artist line (guidance alone never writes TURN_INFO).
+            val track = NotificationRepository.currentTrack.value
+            val farMeters = parseDistanceMeters(title)
+            if (settings.farTurnMusicEnabled && track != null && farMeters != null && farMeters >= FAR_TURN_METERS) {
+                val (songTitle, artist) = com.navigator.app.dash.IdleDashboard.splitTrack(track)
+                BccuConnectionService.sendDashTextIfRunning(
+                    distance = title.ifBlank { null },
+                    info = artist,
+                    road = songTitle,
+                    eta = etaText,
+                    remaining = remainingDistanceText,
+                )
+            } else {
+                BccuConnectionService.sendDashTextIfRunning(
+                    distance = title.ifBlank { null },
+                    info = "",
+                    road = text.ifBlank { null },
+                    eta = etaText,
+                    remaining = remainingDistanceText,
+                )
+            }
             captureManeuverIconIfEnabled(sbn, title, text)
             val guessedIcon = TurnIconHeuristic.guessDirection(this, sbn)
             guessedIcon?.let { BccuConnectionService.sendTurnIconIfRunning(it) }
@@ -103,7 +184,10 @@ class AppNotificationListener : NotificationListenerService() {
             return
         }
 
-        if (packageName !in settings.notificationSourceApps) return
+        if (packageName !in settings.notificationSourceApps) {
+            audit(NotificationAudit.Verdict.SKIPPED, "App not in the mirrored-apps list")
+            return
+        }
 
         // Only INDIVIDUAL conversations reach the dash: skip group chats
         // (WhatsApp groups, group MMS) and the per-app summary notifications
@@ -111,10 +195,12 @@ class AppNotificationListener : NotificationListenerService() {
         val n = sbn.notification
         if (n.flags and Notification.FLAG_GROUP_SUMMARY != 0) {
             AppLogger.log("Notif", "Skipping group-summary notification from $packageName")
+            audit(NotificationAudit.Verdict.SKIPPED, "Group-summary notification")
             return
         }
         if (extras.getBoolean(Notification.EXTRA_IS_GROUP_CONVERSATION, false)) {
             AppLogger.log("Notif", "Skipping GROUP conversation from $packageName: \"$title\"")
+            audit(NotificationAudit.Verdict.SKIPPED, "Group conversation")
             return
         }
         // WhatsApp fallback for older notification styles: group messages title
@@ -124,11 +210,20 @@ class AppNotificationListener : NotificationListenerService() {
                 extras.getBoolean(Notification.EXTRA_IS_GROUP_CONVERSATION, true))
         ) {
             AppLogger.log("Notif", "Skipping WhatsApp group (conversation title present): \"$title\"")
+            audit(NotificationAudit.Verdict.SKIPPED, "WhatsApp group (conversation title)")
             return
         }
 
+        // Resolved here, not above: this is two binder calls and the nav path
+        // (which fires every second or two for a whole ride) never used it.
+        val appLabel = try {
+            packageManager.getApplicationLabel(packageManager.getApplicationInfo(packageName, 0)).toString()
+        } catch (e: Exception) {
+            packageName
+        }
+
         val combined = if (title.isNotBlank()) "$title: $text" else text
-        AppLogger.log("Notif", "Captured from $packageName ($appLabel): ${redact(combined)}")
+        AppLogger.log("Notif", "Captured from $packageName ($appLabel): $combined")
         NotificationRepository.addEntry(
             NotificationEntry(
                 packageName = packageName,
@@ -143,6 +238,9 @@ class AppNotificationListener : NotificationListenerService() {
         // pushing non-navigation notifications to the dash while mirroring is off.
         if (settings.mirrorEnabled) {
             BccuConnectionService.sendNotificationIfRunning(combined, dashIcon)
+            audit(NotificationAudit.Verdict.MIRRORED, "Sent to dash banner")
+        } else {
+            audit(NotificationAudit.Verdict.CAPTURED, "Mirroring off - kept in-app only")
         }
     }
 
@@ -163,6 +261,22 @@ class AppNotificationListener : NotificationListenerService() {
      * this same dash slot showed a bare "00:00" - strongly suggesting the
      * firmware expects a strict numeric time, not extra letters.
      */
+    /**
+     * Best-effort meters from a nav notification's distance text ("110 m",
+     * "1.2 km", "0.5 mi"). Null when the text doesn't look like a distance -
+     * far-turn substitution then stays off, which is the safe default.
+     */
+    private fun parseDistanceMeters(text: String): Double? {
+        val m = Regex("([0-9]+(?:[.,][0-9]+)?)\\s*(km|mi|ft|m)\\b", RegexOption.IGNORE_CASE).find(text) ?: return null
+        val value = m.groupValues[1].replace(',', '.').toDoubleOrNull() ?: return null
+        return when (m.groupValues[2].lowercase()) {
+            "km" -> value * 1000.0
+            "mi" -> value * 1609.34
+            "ft" -> value * 0.3048
+            else -> value
+        }
+    }
+
     private fun parseEtaAndRemainingDistance(subText: String): Pair<String?, String?> {
         if (subText.isBlank()) return null to null
         // Nav apps use a variety of separators between the "22 min", "9.7 km"
@@ -211,7 +325,7 @@ class AppNotificationListener : NotificationListenerService() {
      * doesn't cause a flicker.
      */
     override fun onNotificationRemoved(sbn: StatusBarNotification) {
-        if (isNavigationNotification(sbn, AppSettings(this))) {
+        if (isNavigationNotification(sbn, settings)) {
             AppLogger.log("Notif", "Nav notification removed from ${sbn.packageName} - scheduling guidance clear")
             // TurnBeeper.reset() deliberately NOT called here: Maps routinely
             // removes+reposts its notification mid-route, and resetting the beep
@@ -246,20 +360,25 @@ class AppNotificationListener : NotificationListenerService() {
             val file = java.io.File(outDir, "${label}__${hash}.png")
             if (file.exists()) return
             java.io.FileOutputStream(file).use { bitmap.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, it) }
-            AppLogger.log("Capture", "Saved maneuver icon: text=${redact(text)} hash=$hash -> ${file.name}")
+            AppLogger.log("Capture", "Saved maneuver icon: text=\"$text\" hash=$hash -> ${file.name}")
         } catch (e: Exception) {
             AppLogger.log("Capture", "!! capture failed: $e")
         }
     }
 
     /**
-     * Redact notification content before logging. [AppLogger] mirrors every line
-     * to a public `Download/OpenDash` copy, so raw titles/bodies/destinations
-     * there would leak private messages and locations to shared storage
-     * (readable by other apps with storage access, over USB/MTP and cloud
-     * backup, and surviving app uninstall). Log only the length, never content.
+     * A nav app posts far more than guidance: traffic-incident reports,
+     * "rate this place", offers. Those were all being driven onto the dash as
+     * if they were turn-by-turn, which is how a red incident badge ended up
+     * being read as a maneuver icon.
+     *
+     * Live guidance is ongoing - it sits in the shade for the whole route - or
+     * the app tags it CATEGORY_NAVIGATION, which Google Maps does. Either is
+     * enough; requiring both is what silently dropped real guidance from apps
+     * that don't set the category.
      */
-    private fun redact(s: String): String = if (s.isEmpty()) "<empty>" else "<${s.length} chars>"
+    private fun isLiveGuidance(sbn: StatusBarNotification): Boolean =
+        sbn.isOngoing || sbn.notification.category == Notification.CATEGORY_NAVIGATION
 
     private fun isNavigationNotification(sbn: StatusBarNotification, settings: AppSettings): Boolean {
         val override = settings.navAppOverride

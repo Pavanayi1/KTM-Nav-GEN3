@@ -30,9 +30,10 @@ class RemoteModeOverlay(
     private data class Mode(val id: String, val title: String, val subtitle: String)
 
     private val modes = listOf(
-        Mode(AppSettings.MODE_GAMEPAD, "Gamepad", "Control phone apps"),
-        Mode(AppSettings.MODE_MEDIA, "Media", "Play / pause / skip"),
-        Mode(AppSettings.MODE_DASH, "Dash menu", "Open Navigator Gen3"),
+        Mode(AppSettings.MODE_CONTROLLER, "Controller", "D-pad for the phone"),
+        Mode(AppSettings.MODE_MUSIC, "Music", "Volume & tracks"),
+        Mode(AppSettings.MODE_INTERCOM, "Intercom", "Hold SET to talk"),
+        Mode(AppSettings.MODE_OFF, "Bike (off)", "Buttons control the bike"),
     )
 
     private val wm = context.getSystemService(Context.WINDOW_SERVICE) as WindowManager

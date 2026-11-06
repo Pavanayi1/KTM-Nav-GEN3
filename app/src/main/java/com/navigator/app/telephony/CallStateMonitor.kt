@@ -23,9 +23,12 @@ import com.navigator.app.logging.AppLogger
 @SuppressLint("MissingPermission") // permission checked by caller before starting monitoring
 class CallStateMonitor(
     private val context: Context,
-    private val onRingingChanged: (Boolean) -> Unit
+    private val onRingingChanged: (Boolean) -> Unit,
+    /** Fired when a call becomes ACTIVE (offhook) - the audio-routing hook. */
+    private val onCallActive: () -> Unit = {},
 ) {
     private val telephonyManager = context.getSystemService(TelephonyManager::class.java)
+    private var lastState = TelephonyManager.CALL_STATE_IDLE
 
     @Suppress("DEPRECATION")
     private val listener = object : PhoneStateListener() {
@@ -33,6 +36,10 @@ class CallStateMonitor(
             val ringing = state == TelephonyManager.CALL_STATE_RINGING
             AppLogger.log("Call", "State changed: $state (ringing=$ringing)")
             onRingingChanged(ringing)
+            if (state == TelephonyManager.CALL_STATE_OFFHOOK && lastState != TelephonyManager.CALL_STATE_OFFHOOK) {
+                onCallActive()
+            }
+            lastState = state
         }
     }
 
