@@ -1,5 +1,11 @@
 # Changelog
 
+## R78 (2026-11-07)
+
+**Duke or Adventure?** Setup now asks KTM riders which bike they ride. Pick **Duke** and the home screen
+shows a 390 Duke with **READY TO RACE**; **Adventure** keeps the familiar card. Already set up? Change it
+any time in **Settings → Your KTM**.
+
 ## R77 (2026-11-07)
 
 **Works with the newer Google Maps notification layout** (#8). Some Maps versions now put the whole

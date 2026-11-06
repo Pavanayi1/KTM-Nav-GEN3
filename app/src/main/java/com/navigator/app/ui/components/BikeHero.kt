@@ -29,6 +29,21 @@ import com.navigator.app.ui.theme.Brand
 data class BikeArt(val drawable: Int, val cardColor: Color)
 
 /**
+ * Which KTM the rider has. Only changes the artwork and home headline: the
+ * dash protocol is the same Gen-3 one for both. Husqvarna riders keep their
+ * brand's single artwork whatever this says.
+ */
+enum class BikeModel(val id: String, val label: String) {
+    ADVENTURE("adventure", "Adventure"),
+    DUKE("duke", "Duke");
+
+    companion object {
+        /** Unknown or unset reads as Adventure: the art every rider had before this choice existed. */
+        fun fromId(id: String?): BikeModel = entries.firstOrNull { it.id == id } ?: ADVENTURE
+    }
+}
+
+/**
  * Decoded bitmaps, shared app-wide. `painterResource` decodes at every new
  * composition site - the brand picker's crossfade and each return to the home
  * screen paid a fresh WebP decode on the main thread (a dropped frame or two
@@ -48,15 +63,17 @@ object BikeBitmaps {
     fun preload(context: android.content.Context) {
         val app = context.applicationContext
         Thread({
-            listOf(R.drawable.hero_ktm, R.drawable.hero_husqvarna, R.drawable.bike_ktm, R.drawable.bike_husqvarna)
+            listOf(R.drawable.hero_ktm, R.drawable.hero_ktm_duke, R.drawable.hero_husqvarna, R.drawable.bike_ktm, R.drawable.bike_husqvarna)
                 .forEach { runCatching { get(app, it) } }
         }, "bike-art-preload").start()
     }
 }
 
-fun bikeArtFor(brand: Brand): BikeArt = when (brand) {
+fun bikeArtFor(brand: Brand, model: BikeModel = BikeModel.ADVENTURE): BikeArt = when (brand) {
     Brand.HUSQVARNA -> BikeArt(R.drawable.hero_husqvarna, Color(0xFF0A162A))
-    Brand.KTM -> BikeArt(R.drawable.hero_ktm, Color(0xFF060709))
+    // The Duke art has a transparent background, so it sits on the same card.
+    Brand.KTM -> if (model == BikeModel.DUKE) BikeArt(R.drawable.hero_ktm_duke, Color(0xFF060709))
+        else BikeArt(R.drawable.hero_ktm, Color(0xFF060709))
 }
 
 /**
@@ -69,13 +86,14 @@ fun bikeArtFor(brand: Brand): BikeArt = when (brand) {
 fun BikeHeroCard(
     brand: Brand,
     modifier: Modifier = Modifier,
+    model: BikeModel = BikeModel.ADVENTURE,
     corner: Dp = 20.dp,
     artAlignment: Alignment = Alignment.Center,
     artPadding: Dp = 14.dp,
     content: @Composable () -> Unit = {},
 ) {
-    Crossfade(targetState = brand, animationSpec = tween(350), modifier = modifier, label = "bikeHero") { b ->
-        val art = bikeArtFor(b)
+    Crossfade(targetState = brand to model, animationSpec = tween(350), modifier = modifier, label = "bikeHero") { (b, m) ->
+        val art = bikeArtFor(b, m)
         Box(
             Modifier
                 .fillMaxSize()

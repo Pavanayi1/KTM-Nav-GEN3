@@ -303,6 +303,19 @@ fun SettingsScreen(
                     SettingsRow("Change bike / brand", showDivider = true, onClick = onChangeBrand) {
                         MonoValue("${com.navigator.app.ui.theme.themeFor(settings.brand).displayName} ›")
                     }
+                    if (settings.brand == com.navigator.app.ui.theme.Brand.KTM) {
+                        // Two options, so a tap flips it: the home card's art
+                        // and headline follow ("READY TO RACE" for the Duke).
+                        var bikeModel by remember { mutableStateOf(settings.bikeModel) }
+                        SettingsRow("Your KTM", showDivider = true, onClick = {
+                            bikeModel = if (bikeModel == com.navigator.app.ui.components.BikeModel.DUKE)
+                                com.navigator.app.ui.components.BikeModel.ADVENTURE
+                            else com.navigator.app.ui.components.BikeModel.DUKE
+                            settings.bikeModel = bikeModel
+                        }) {
+                            MonoValue("${bikeModel.label} ›")
+                        }
+                    }
                     SettingsRow("Your name", showDivider = true, onClick = { dialog = SettingsDialog.NAME }) {
                         MonoValue(userName.ifBlank { "Set ›" })
                     }

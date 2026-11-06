@@ -176,6 +176,7 @@ fun OnboardingScreen(settings: AppSettings, onComplete: () -> Unit) {
                         onContinue = { step = STEP_NAME },
                     )
                     STEP_NAME -> NameStep(
+                        settings = settings,
                         userName = userName,
                         onNameChange = { userName = it; settings.userName = it },
                         onBack = { step = STEP_RIDES },
@@ -564,6 +565,7 @@ private fun RemoteRow(key: String, action: String) {
 
 @Composable
 private fun ColumnScope.NameStep(
+    settings: AppSettings,
     userName: String,
     onNameChange: (String) -> Unit,
     onBack: () -> Unit,
@@ -594,8 +596,69 @@ private fun ColumnScope.NameStep(
             colors = ktmFieldColors(),
             modifier = Modifier.fillMaxWidth(),
         )
+        // Which KTM: picks the home card's art ("READY TO RACE" for the Duke).
+        // Husqvarna has one artwork, so the question is KTM-only.
+        if (Ktm.current.brand == com.navigator.app.ui.theme.Brand.KTM) {
+            Spacer(Modifier.height(26.dp))
+            Eyebrow("Which KTM do you ride?", color = Ktm.Dim, fontSize = 11, letterSpacing = 1.5)
+            Spacer(Modifier.height(10.dp))
+            BikeModelPicker(settings)
+        }
     }
     StepFooter(step = STEP_NAME, label = "Continue", enabled = userName.isNotBlank(), onContinue = onContinue)
+}
+
+/**
+ * Two picture cards, Duke and Adventure. The choice is saved the moment it's
+ * tapped (like the name field above), so "Back" or leaving mid-wizard keeps it.
+ * Also used by Settings, so riders past onboarding can change it.
+ */
+@Composable
+fun BikeModelPicker(settings: AppSettings, onChanged: (com.navigator.app.ui.components.BikeModel) -> Unit = {}) {
+    var model by remember { mutableStateOf(settings.bikeModel) }
+    Row(horizontalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.fillMaxWidth()) {
+        listOf(
+            com.navigator.app.ui.components.BikeModel.DUKE,
+            com.navigator.app.ui.components.BikeModel.ADVENTURE,
+        ).forEach { option ->
+            val selected = option == model
+            val art = com.navigator.app.ui.components.bikeArtFor(com.navigator.app.ui.theme.Brand.KTM, option)
+            Column(
+                modifier = Modifier
+                    .weight(1f)
+                    .clip(RoundedCornerShape(12.dp))
+                    .background(art.cardColor)
+                    .border(
+                        if (selected) 2.dp else 1.dp,
+                        if (selected) Ktm.Orange else Ktm.Border,
+                        RoundedCornerShape(12.dp),
+                    )
+                    .clickable {
+                        model = option
+                        settings.bikeModel = option
+                        onChanged(option)
+                    }
+                    .padding(10.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+            ) {
+                androidx.compose.foundation.Image(
+                    bitmap = com.navigator.app.ui.components.BikeBitmaps.get(
+                        androidx.compose.ui.platform.LocalContext.current, art.drawable,
+                    ),
+                    contentDescription = "KTM ${option.label}",
+                    contentScale = androidx.compose.ui.layout.ContentScale.Fit,
+                    modifier = Modifier.fillMaxWidth().height(86.dp),
+                )
+                Spacer(Modifier.height(8.dp))
+                Text(
+                    option.label.uppercase(),
+                    color = if (selected) Ktm.Orange else androidx.compose.ui.graphics.Color.White,
+                    fontFamily = BarlowCondensed, fontWeight = FontWeight.Bold,
+                    fontStyle = FontStyle.Italic, fontSize = 18.sp,
+                )
+            }
+        }
+    }
 }
 
 @Composable

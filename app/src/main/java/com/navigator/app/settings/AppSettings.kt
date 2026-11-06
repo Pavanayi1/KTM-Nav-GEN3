@@ -112,6 +112,16 @@ class AppSettings(context: Context) {
         get() = com.navigator.app.ui.theme.Brand.fromId(pairingPrefs.getString(KEY_BRAND, null))
         set(value) = pairingPrefs.edit().putString(KEY_BRAND, value.id).apply()
 
+    /**
+     * Which KTM the rider has, for the home card's artwork and headline: the
+     * Duke (naked street bike, "READY TO RACE") or the Adventure (the original
+     * art, "READY TO RIDE"). Asked in onboarding; changeable in Settings.
+     * Plain store beside [brand], for the same reason.
+     */
+    var bikeModel: com.navigator.app.ui.components.BikeModel
+        get() = com.navigator.app.ui.components.BikeModel.fromId(pairingPrefs.getString(KEY_BIKE_MODEL, null))
+        set(value) = pairingPrefs.edit().putString(KEY_BIKE_MODEL, value.id).apply()
+
     /** True once the rider has explicitly picked a brand (so first-run shows brand select). */
     var brandChosen: Boolean
         get() = pairingPrefs.contains(KEY_BRAND)
@@ -504,6 +514,7 @@ class AppSettings(context: Context) {
         private const val KEY_ONBOARDING_COMPLETE = "onboarding_complete"
         private const val KEY_USER_NAME = "user_name"
         private const val KEY_BRAND = "brand"
+        private const val KEY_BIKE_MODEL = "bike_model"
 
         const val DEFAULT_GEMINI_MODEL = "gemini-2.5-flash"
 

@@ -257,11 +257,13 @@ fun GridMenuScreen(
         // rider's name comes from onboarding; without one the eyebrow just
         // states the time of day.
         val userName = remember { settings.userName }
+        val bikeModel = remember { settings.bikeModel }
         Box(Modifier.enterStagger(0)) {
             HeroBanner(
                 brandTheme.brand, greetingFor(userName),
                 topPadding = lerp(18.dp, 10.dp, collapse),
                 height = lerp(HERO_HEIGHT, HERO_HEIGHT_COLLAPSED, collapse),
+                model = bikeModel,
             )
         }
 
@@ -349,32 +351,45 @@ private fun HeroBanner(
     greeting: String,
     topPadding: androidx.compose.ui.unit.Dp = 18.dp,
     height: androidx.compose.ui.unit.Dp = HERO_HEIGHT,
+    model: com.navigator.app.ui.components.BikeModel = com.navigator.app.ui.components.BikeModel.ADVENTURE,
 ) {
-    val cardBg = com.navigator.app.ui.components.bikeArtFor(brand).cardColor
+    // The Duke card is the mirror image of the Adventure one: the bike faces
+    // right, so it stands on the left looking at "READY TO RACE" (KTM's own
+    // tagline) on the right. The fade runs from the text's side either way.
+    val duke = brand == com.navigator.app.ui.theme.Brand.KTM &&
+        model == com.navigator.app.ui.components.BikeModel.DUKE
+    val cardBg = com.navigator.app.ui.components.bikeArtFor(brand, model).cardColor
     val white = androidx.compose.ui.graphics.Color.White
     com.navigator.app.ui.components.BikeHeroCard(
         brand = brand,
+        model = model,
         modifier = Modifier.padding(top = topPadding).fillMaxWidth().height(height),
         corner = 4.dp,
-        artAlignment = Alignment.CenterEnd,
+        artAlignment = if (duke) Alignment.CenterStart else Alignment.CenterEnd,
         artPadding = 6.dp,
     ) {
+        val fade = arrayOf(
+            0f to cardBg,
+            0.30f to cardBg.copy(alpha = 0.80f),
+            0.55f to androidx.compose.ui.graphics.Color.Transparent,
+        )
         Box(
-            Modifier.fillMaxSize().background(
-                androidx.compose.ui.graphics.Brush.horizontalGradient(
-                    0f to cardBg,
-                    0.30f to cardBg.copy(alpha = 0.80f),
-                    0.55f to androidx.compose.ui.graphics.Color.Transparent,
-                )
+            Modifier.fillMaxSize().graphicsLayer { if (duke) scaleX = -1f }.background(
+                androidx.compose.ui.graphics.Brush.horizontalGradient(*fade)
             )
         )
-        Column(Modifier.padding(start = 18.dp, top = 18.dp)) {
+        Box(Modifier.fillMaxSize(), contentAlignment = if (duke) Alignment.TopEnd else Alignment.TopStart) {
+        Column(
+            modifier = Modifier.padding(horizontal = 18.dp).padding(top = 18.dp),
+            horizontalAlignment = if (duke) Alignment.End else Alignment.Start,
+        ) {
             Text(
                 greeting, color = white.copy(alpha = 0.62f), fontFamily = BarlowCondensed,
                 fontWeight = FontWeight.Bold, fontSize = 11.sp, letterSpacing = 2.4.sp,
+                textAlign = if (duke) androidx.compose.ui.text.style.TextAlign.End else null,
             )
             Text(
-                "READY\nTO RIDE",
+                if (duke) "READY\nTO RACE" else "READY\nTO RIDE",
                 modifier = Modifier.padding(top = 6.dp),
                 color = white,
                 fontFamily = BarlowCondensed,
@@ -383,7 +398,9 @@ private fun HeroBanner(
                 fontSize = 40.sp,
                 lineHeight = 38.sp,
                 letterSpacing = (-0.6).sp,
+                textAlign = if (duke) androidx.compose.ui.text.style.TextAlign.End else null,
             )
+        }
         }
     }
 }
