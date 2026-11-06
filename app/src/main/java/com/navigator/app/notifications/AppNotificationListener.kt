@@ -114,7 +114,15 @@ class AppNotificationListener : NotificationListenerService() {
             // directions in the background that it gets with the app open.
             BccuConnectionService.ensureRunning(this)
             val navText = if (title.isNotBlank()) "$title $text" else text
-            AppLogger.log("Notif", "Nav update from $packageName: distance=\"$title\" road=\"$text\"")
+            // Distance and road line, from either Maps layout (issue #8: newer
+            // Maps puts "400 m · Turn left onto X" all in the title).
+            val fields = NavFields.split(
+                title, text,
+                extras.getCharSequence(NavFields.EXTRA_SHORT_CRITICAL_TEXT)?.toString(),
+            )
+            val distance = fields.distance
+            val road = fields.road
+            AppLogger.log("Notif", "Nav update from $packageName: title=\"$title\" text=\"$text\" -> distance=\"$distance\" road=\"$road\"")
             // Dump every extras key so we can see, from real logs, exactly which
             // field carries ETA/duration/remaining-distance - no guessing which
             // Android notification extra Google Maps uses for that subtitle line.
@@ -130,19 +138,19 @@ class AppNotificationListener : NotificationListenerService() {
             NotificationRepository.updateNavText(packageName, navText)
             val subText = extras.getCharSequence(Notification.EXTRA_SUB_TEXT)?.toString().orEmpty()
             val (etaText, remainingDistanceText) = parseEtaAndRemainingDistance(subText)
-            // title/text line up with the official app's own field split:
-            // e.g. title="110 m" (TURN_DISTANCE), text="towards 1st Cross Rd" (TURN_ROAD).
+            // distance/road line up with the official app's own field split:
+            // e.g. "110 m" (TURN_DISTANCE), "towards 1st Cross Rd" (TURN_ROAD).
             // Far-turn music: while the next turn is comfortably far away, the
             // road name adds nothing - show the current track there instead.
             // The countdown (TURN_DISTANCE) and ETA stay live, and the moment
             // the turn is < 500 m the next update reverts to the road name and
             // blanks the artist line (guidance alone never writes TURN_INFO).
             val track = NotificationRepository.currentTrack.value
-            val farMeters = parseDistanceMeters(title)
+            val farMeters = distance?.let { parseDistanceMeters(it) }
             if (settings.farTurnMusicEnabled && track != null && farMeters != null && farMeters >= FAR_TURN_METERS) {
                 val (songTitle, artist) = com.navigator.app.dash.IdleDashboard.splitTrack(track)
                 BccuConnectionService.sendDashTextIfRunning(
-                    distance = title.ifBlank { null },
+                    distance = distance,
                     info = artist,
                     road = songTitle,
                     eta = etaText,
@@ -150,9 +158,9 @@ class AppNotificationListener : NotificationListenerService() {
                 )
             } else {
                 BccuConnectionService.sendDashTextIfRunning(
-                    distance = title.ifBlank { null },
+                    distance = distance,
                     info = "",
-                    road = text.ifBlank { null },
+                    road = road,
                     eta = etaText,
                     remaining = remainingDistanceText,
                 )
@@ -169,12 +177,12 @@ class AppNotificationListener : NotificationListenerService() {
                 com.navigator.app.audio.TurnBeeper.volumePercent = settings.beepVolumePercent
                 com.navigator.app.audio.TurnBeeper.gpsSpeedKmh = com.navigator.app.location.SpeedMonitor.speedKmh.value
                 com.navigator.app.audio.TurnBeeper.engineOn = com.navigator.app.sensors.VibrationMonitor.engineOn.value
-                com.navigator.app.audio.TurnBeeper.onGuidance(title.ifBlank { null }, guessedIcon, text.ifBlank { null })
+                com.navigator.app.audio.TurnBeeper.onGuidance(distance, guessedIcon, road)
             }
             NotificationRepository.updateNavGuidance(
                 NotificationRepository.NavGuidance(
-                    distance = title.ifBlank { null },
-                    road = text.ifBlank { null },
+                    distance = distance,
+                    road = road,
                     eta = etaText,
                     remaining = remainingDistanceText,
                     maneuver = maneuverTextFor(guessedIcon),

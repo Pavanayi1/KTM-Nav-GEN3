@@ -187,11 +187,23 @@ object TurnIconHeuristic {
         )
         val sb = StringBuilder()
         for (k in keys) {
-            e.getCharSequence(k)?.let { sb.append(' ').append(it) }
+            e.getCharSequence(k)?.let { sb.append(' ').append(withoutRoadName(it.toString())) }
         }
-        sbn.notification.tickerText?.let { sb.append(' ').append(it) }
+        sbn.notification.tickerText?.let { sb.append(' ').append(withoutRoadName(it.toString())) }
         return sb.toString().lowercase()
     }
+
+    /**
+     * Drops the road name from one notification field: everything after
+     * "onto", "towards", "toward" or "into". Road names are not maneuvers, and
+     * matching inside them is how "Turn left onto Harding Rd" became a SHARP
+     * left ("hard") and "Continue onto Right Bank Rd" a right turn (issue #8).
+     * Per field, so a road name in the text line can't swallow the title.
+     */
+    internal fun withoutRoadName(field: String): String =
+        ROAD_TAIL.replace(field, "")
+
+    private val ROAD_TAIL = Regex("""\b(?:onto|towards?|into)\b.*""", RegexOption.IGNORE_CASE)
 
     /**
      * Phrases that mean "you are there", as opposed to the bare words
@@ -226,13 +238,15 @@ object TurnIconHeuristic {
      * generic "turn left/right", so a "sharp left" isn't swallowed by "left".
      * Returns null when no maneuver word is present (falls through to bitmap).
      */
-    private fun parseManeuverFromText(t: String): BccuProtocol.TurnIcon? {
+    internal fun parseManeuverFromText(t: String): BccuProtocol.TurnIcon? {
         if (t.isBlank()) return null
-        val left = t.contains("left")
-        val right = t.contains("right")
+        // Whole words only (issue #8): substring matching read "left" inside
+        // "Cleft", "hard" inside "Richardson", "head" inside "Arrowhead".
+        val left = t.hasWord("left")
+        val right = t.hasWord("right")
 
         // Roundabouts: "roundabout" / "rotary" + an exit ordinal.
-        if (t.contains("roundabout") || t.contains("rotary")) {
+        if (t.hasWord("roundabout") || t.hasWord("rotary")) {
             val exit = roundaboutExit(t)
             if (exit != null) {
                 val idx = exit.coerceIn(1, 16)
@@ -247,23 +261,23 @@ object TurnIconHeuristic {
         }
 
         // Sharp / hard.
-        if ((t.contains("sharp") || t.contains("hard")) && (left || right)) {
+        if ((t.hasWord("sharp") || t.hasWord("hard")) && (left || right)) {
             return if (left) BccuProtocol.TurnIcon.HEAVY_LEFT else BccuProtocol.TurnIcon.HEAVY_RIGHT
         }
         // Slight / soft / bear.
-        if ((t.contains("slight") || t.contains("soft") || t.contains("bear")) && (left || right)) {
+        if ((t.hasWord("slight") || t.hasWord("soft") || t.hasWord("bear")) && (left || right)) {
             return if (left) BccuProtocol.TurnIcon.LIGHT_LEFT else BccuProtocol.TurnIcon.LIGHT_RIGHT
         }
         // Keep / stay in lane.
-        if ((t.contains("keep") || t.contains("stay")) && (left || right)) {
+        if ((t.hasWord("keep") || t.hasWord("stay")) && (left || right)) {
             return if (left) BccuProtocol.TurnIcon.KEEP_LEFT else BccuProtocol.TurnIcon.KEEP_RIGHT
         }
         // Merge onto a highway.
-        if (t.contains("merge")) {
+        if (t.hasWord("merge")) {
             return if (left) BccuProtocol.TurnIcon.ENTER_HIGHWAY_LEFT_LANE else BccuProtocol.TurnIcon.ENTER_HIGHWAY_RIGHT_LANE
         }
         // Take a motorway exit / off-ramp.
-        if ((t.contains("exit") || t.contains("ramp") || t.contains("off-ramp")) && (left || right)) {
+        if ((t.hasWord("exit") || t.hasWord("ramp") || t.contains("off-ramp")) && (left || right)) {
             return if (left) BccuProtocol.TurnIcon.LEAVE_HIGHWAY_LEFT_LANE else BccuProtocol.TurnIcon.LEAVE_HIGHWAY_RIGHT_LANE
         }
         // Arrival - a real arrival sentence only, never an ETA's "Arrive 16:51".
@@ -271,10 +285,10 @@ object TurnIconHeuristic {
             return BccuProtocol.TurnIcon.END
         }
         // Plain turn: this is a normal ~90° turn, so QUITE_* (not LIGHT_*).
-        if (t.contains("turn left") || (left && t.contains("turn"))) return BccuProtocol.TurnIcon.QUITE_LEFT
-        if (t.contains("turn right") || (right && t.contains("turn"))) return BccuProtocol.TurnIcon.QUITE_RIGHT
+        if (t.contains("turn left") || (left && t.hasWord("turn"))) return BccuProtocol.TurnIcon.QUITE_LEFT
+        if (t.contains("turn right") || (right && t.hasWord("turn"))) return BccuProtocol.TurnIcon.QUITE_RIGHT
         // Straight / continue / head.
-        if (t.contains("straight") || t.contains("continue") || t.contains("head ") || t.contains("proceed")) {
+        if (t.hasWord("straight") || t.hasWord("continue") || t.hasWord("head") || t.hasWord("proceed")) {
             return BccuProtocol.TurnIcon.GO_STRAIGHT
         }
         // A bare directional word with no other maneuver context - treat as a turn.
@@ -282,6 +296,11 @@ object TurnIconHeuristic {
         if (right && !left) return BccuProtocol.TurnIcon.QUITE_RIGHT
         return null
     }
+
+    private val wordPatterns = java.util.concurrent.ConcurrentHashMap<String, Regex>()
+
+    private fun String.hasWord(word: String): Boolean =
+        wordPatterns.getOrPut(word) { Regex("""\b${Regex.escape(word)}\b""") }.containsMatchIn(this)
 
     /** Pull a roundabout exit number from phrases like "3rd exit" or "exit 2". */
     private fun roundaboutExit(t: String): Int? {

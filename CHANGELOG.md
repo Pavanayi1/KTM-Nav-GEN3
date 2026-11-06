@@ -1,5 +1,16 @@
 # Changelog
 
+## R77 (2026-11-07)
+
+**Works with the newer Google Maps notification layout** (#8). Some Maps versions now put the whole
+instruction in one line ("400 m · Turn left onto 1st Main Rd") and draw the arrow in black.
+- The dash gets **400 m** as the distance and **Turn left onto 1st Main Rd** as the road line, instead of
+  a cut-off "400 m ·…" and an empty road line.
+- Road names no longer change the arrow: "Turn left onto Harding Rd" is a normal left, not a sharp one,
+  and "Continue onto Right Bank Rd" is straight ahead.
+- Black arrows are recognised by the turn-icon model, which used to see an empty square.
+- The older Maps layout behaves exactly as before.
+
 ## R76 (2026-11-07)
 
 **Rider Intercom: talk to your pillion.** A phone-to-phone Bluetooth intercom is now built in. Open it

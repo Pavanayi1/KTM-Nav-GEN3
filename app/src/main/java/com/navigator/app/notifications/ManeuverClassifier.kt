@@ -123,12 +123,25 @@ object ManeuverClassifier {
         return if (n != null) BccuProtocol.TurnIcon.fromBinary(n) else NAMED[label]
     }
 
-    /** Composite onto black, scale to 96x96, emit RGB floats [0,1] - matches the reference app byte-for-byte. */
+    /**
+     * Composite onto black, scale to 96x96, emit RGB floats [0,1] - matches the
+     * reference app byte-for-byte for the usual white arrow.
+     *
+     * Some Maps versions tint the arrow black (issue #8). Black on the black
+     * backdrop is an empty square, and the model guessed at random. The arrow's
+     * shape lives in its alpha channel, so a dark arrow is redrawn white
+     * (alpha kept) first - which is exactly what the model was trained on.
+     */
     private fun preprocess(bitmap: Bitmap): ByteBuffer {
         val onBlack = Bitmap.createBitmap(bitmap.width, bitmap.height, Bitmap.Config.ARGB_8888)
         val canvas = Canvas(onBlack)
         canvas.drawColor(Color.BLACK)
-        canvas.drawBitmap(bitmap, 0f, 0f, null)
+        val paint = if (isDarkInk(bitmap)) {
+            android.graphics.Paint().apply {
+                colorFilter = android.graphics.PorterDuffColorFilter(Color.WHITE, android.graphics.PorterDuff.Mode.SRC_IN)
+            }
+        } else null
+        canvas.drawBitmap(bitmap, 0f, 0f, paint)
         val scaled = Bitmap.createScaledBitmap(onBlack, INPUT, INPUT, true)
         val buf = ByteBuffer.allocateDirect(INPUT * INPUT * 3 * 4).order(ByteOrder.nativeOrder())
         for (y in 0 until INPUT) {
@@ -143,6 +156,34 @@ object ManeuverClassifier {
         if (scaled != onBlack) scaled.recycle()
         onBlack.recycle()
         return buf
+    }
+
+    /**
+     * True when the visible pixels are mostly dark, i.e. a black/near-black
+     * tinted glyph on a transparent background. Only pixels with real coverage
+     * count, so a white arrow's soft anti-aliased edge can't tip it.
+     */
+    private fun isDarkInk(bitmap: Bitmap): Boolean {
+        val pixels = IntArray(bitmap.width * bitmap.height)
+        bitmap.getPixels(pixels, 0, bitmap.width, 0, 0, bitmap.width, bitmap.height)
+        return isDarkInk(pixels)
+    }
+
+    /** Pixel-array form of [isDarkInk], free of Bitmap so it is JVM-testable. */
+    internal fun isDarkInk(argb: IntArray): Boolean {
+        var weight = 0L
+        var lumaSum = 0L
+        for (p in argb) {
+            val a = (p ushr 24) and 0xFF
+            if (a < 128) continue
+            val r = (p shr 16) and 0xFF
+            val g = (p shr 8) and 0xFF
+            val b = p and 0xFF
+            lumaSum += (299 * r + 587 * g + 114 * b) / 1000
+            weight++
+        }
+        if (weight == 0L) return false
+        return lumaSum / weight < 80
     }
 
     private fun hashOf(bitmap: Bitmap): Int {

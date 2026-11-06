@@ -77,6 +77,11 @@ android {
     kotlinOptions {
         jvmTarget = "17"
     }
+    testOptions {
+        // JVM unit tests touch android.* only through stubs (e.g. Log calls);
+        // return defaults instead of throwing.
+        unitTests.isReturnDefaultValues = true
+    }
     buildFeatures {
         compose = true
         buildConfig = true
@@ -97,6 +102,7 @@ dependencies {
     // bitmap and outputs the dash turn-icon code.
     implementation(project(":intercom"))
     implementation("org.tensorflow:tensorflow-lite:2.14.0")
+    testImplementation("junit:junit:4.13.2")
     implementation("androidx.core:core-ktx:1.13.1")
     implementation("androidx.appcompat:appcompat:1.7.0")
     implementation("com.google.android.material:material:1.12.0")
