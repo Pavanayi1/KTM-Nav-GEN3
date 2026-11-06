@@ -19,7 +19,9 @@
   <a href="LICENSE">MIT licence</a>
 </p>
 
-<p align="center"><em>Unofficial beta. Not affiliated with KTM or Husqvarna.</em></p>
+<p align="center"><em>Unofficial beta. Not affiliated with KTM or Husqvarna, or with any other Gen-3 navigation app
+(for example <a href="https://play.google.com/store/apps/details?id=com.bikeconnect.app">Navigation for KTM (Gen 3)</a>
+on the Play Store, an independent project; see <a href="../../issues/3">#3</a>).</em></p>
 
 > [!CAUTION]
 > **Only download Navigator from this repo's [Releases page](../../releases).** A fake copy of this project
